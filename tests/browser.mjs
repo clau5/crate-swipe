@@ -277,6 +277,7 @@ try {
   });
   await check('missing artwork and uncertain matching stay usable',async()=>{
     await page.locator('#closeSetup').click();
+    if (await page.locator('#pick').isVisible()) await page.locator('#closePick').click();
     await page.evaluate(async()=>{const fixture=await import('./tests/fixture.js');fixture.songs[0].cover='';fixture.songs[0].conf='none';fixture.songs[0].trackTitle=null;});
     await page.locator('#chip').click();await page.locator('#goBtn').click();
     assert.equal(await page.locator('.card .art img').first().getAttribute('src'),'tests/reference-cover.png');
@@ -319,8 +320,8 @@ try {
       return route.fulfill({contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(body)});
     });
     try {
-      await live.goto(base);await live.locator('#setup').waitFor({state:'visible'});
-      await live.locator('#closeSetup').click();await live.locator('#emptyAction').click();assert.equal(await live.locator('#setup').isVisible(),true);
+      await live.goto(base);await live.locator('#pick').waitFor({state:'visible'});
+      assert.equal(await live.locator('#setup').isVisible(),false);await live.locator('#changeTok').click();
       await live.locator('#tok').fill('local-test-token');await live.locator('#saveTok').click();await live.locator('#pick').waitFor({state:'visible'});
       await live.locator('#goBtn').click();await live.locator('#dock').waitFor({state:'visible'});await live.locator('#heart:not(:disabled)').waitFor();
       for(let i=0;i<50&&!retrying;i++) await live.waitForTimeout(100);
