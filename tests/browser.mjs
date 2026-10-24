@@ -185,8 +185,14 @@ try {
   await check('reference screen geometry and local assets',async()=>{
     assert.equal(await page.locator('#track').innerText(),'Tried and true');
     const cover=await page.locator('.card .art').first().boundingBox(),bar=await page.locator('#bar').boundingBox(),dock=await page.locator('#dock').boundingBox();
-    assert.equal(cover.width,300);assert.ok(Math.abs(cover.x-52)<1);assert.ok(Math.abs(cover.y-265)<2,JSON.stringify(cover));
-    assert.ok(Math.abs(bar.y-39)<1);assert.ok(Math.abs(dock.y-689)<2,JSON.stringify(dock));
+    assert.equal(cover.width,300);assert.ok(Math.abs(cover.x-52)<1);assert.ok(Math.abs(cover.y-271)<2,JSON.stringify(cover));
+    assert.ok(Math.abs(bar.y-39)<1);assert.ok(Math.abs(dock.y-701)<2,JSON.stringify(dock));
+    // 3.1.1: circular cover, smaller handset type, tight 300px-blur glow sitting slightly above the cover's centre.
+    const look=await page.evaluate(()=>{const cs=e=>getComputedStyle(document.querySelector(e));const b=document.querySelector('#backdrop').getBoundingClientRect();
+      return {radius:cs('.card .art').borderRadius,artist:cs('#dock .artist').fontSize,track:cs('#dock .track').fontSize,blur:cs('#backdrop').filter,glow:{w:b.width,h:b.height,cy:b.y+b.height/2}};});
+    assert.equal(look.radius,'50%');assert.equal(look.artist,'16px');assert.equal(look.track,'18px');assert.equal(look.blur,'blur(150px)');
+    assert.ok(look.glow.w<=cover.width&&look.glow.w>=cover.width*.8,JSON.stringify(look));
+    assert.ok(look.glow.cy<cover.y+cover.height/2-20&&look.glow.cy>cover.y,JSON.stringify({look,cover}));
     assert.equal(await page.locator('img').evaluateAll(images=>images.filter(i=>i.offsetParent!==null).every(i=>i.complete&&i.naturalWidth>0)),true);
     await page.locator('#sound').click();await page.locator('#seek').fill('840');
     await page.screenshot({path:output+'/playback-mobile.png'});

@@ -141,7 +141,7 @@ button,a {
   min-width:100px;
   min-height:100px;
   position:relative;
-  border-radius:4px;
+  border-radius:50%;
   overflow:hidden;
   background:#171717
 }
@@ -173,18 +173,22 @@ button,a {
 .ph span {
   font-size:13px
 }
+/* 3.1.1: glow is a little smaller than the cover, sits slightly above its centre and uses the
+   Figma ~300 blur. --player-center-y / --player-art-size come from syncGeometry() in app.js. */
 #backdrop {
+  --glow:calc(var(--player-art-size,var(--art)) * .9);
   position:fixed;
   z-index:0;
   left:50%;
-  top:50%;
+  top:calc(var(--player-center-y,47.5%) - var(--player-art-size,var(--art)) * .14);
   transform:translate(-50%,-50%);
-  width:min(516px,129vw);
-  height:min(513px,65dvh);
+  width:var(--glow);
+  height:var(--glow);
+  border-radius:50%;
   background-position:center;
   background-size:cover;
-  filter:blur(50px);
-  opacity:.8;
+  filter:blur(150px);
+  opacity:1;
   pointer-events:none
 }
 #bar {
@@ -261,15 +265,15 @@ button,a {
   min-width:0
 }
 .artist {
-  font-size:20px;
-  line-height:26px;
+  font-size:16px;
+  line-height:20px;
   font-weight:500;
   color:var(--mut);
   overflow-wrap:anywhere
 }
 .track {
-  font-size:24px;
-  line-height:28px;
+  font-size:18px;
+  line-height:22px;
   font-weight:500;
   overflow-wrap:anywhere
 }
@@ -443,7 +447,7 @@ button,a {
   z-index:40!important;
   width:var(--art)!important;
   height:var(--art)!important;
-  border-radius:4px;
+  border-radius:50%;
   outline:2px solid white;
   background:transparent!important
 }
@@ -723,6 +727,7 @@ button,a {
   margin:24px 0
 }
 .release-head .art {
+  border-radius:4px;
   width:88px;
   height:88px;
   min-width:88px;
@@ -804,11 +809,11 @@ body.overlay #dock {
 }
 body.overlay #dock .artist {
   font-size:14px;
-  line-height:20px
+  line-height:18px
 }
 body.overlay #dock .track {
-  font-size:18px;
-  line-height:24px
+  font-size:16px;
+  line-height:20px
 }
 body.overlay #dock .progress {
   margin-top:20px
@@ -843,12 +848,12 @@ body.overlay #hint {
     --art:min(220px,calc(100vw - 88px),calc(100dvh - 315px))
   }
   .artist {
-    font-size:18px;
-    line-height:24px
+    font-size:14px;
+    line-height:18px
   }
   .track {
-    font-size:22px;
-    line-height:26px
+    font-size:16px;
+    line-height:20px
   }
   .progress {
     margin-top:18px
@@ -875,10 +880,6 @@ body.overlay #hint {
   .sheet {
     border-left:1px solid #ffffff10;
     border-right:1px solid #ffffff10
-  }
-  #backdrop {
-    width:620px;
-    height:570px
   }
 }
 @media(prefers-reduced-motion:reduce) {

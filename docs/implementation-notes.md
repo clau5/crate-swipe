@@ -70,3 +70,10 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - Timeouts, network failures, 403, rate limits and server errors mean unknown availability, not a dead video. A 30-second cooldown prevents repeated probes during an outage. Unknown candidates remain usable.
 - Playback-confirmed missing/non-embeddable videos (100/101/150) are remembered and removed from the feed quietly. A dead upload cannot consume a track's deduplication key and hide a working alternate upload. HTML5/network and client-identification errors are retryable and never blacklist videos or trigger a rapid skip chain.
 - Metadata is not proof of playback in every region/device. Some restrictions are only reported by the player; those still use the quiet runtime recovery path. The single audible iframe is unchanged.
+
+## 3.1.1 (handset visual polish)
+
+- Feed cover is a full circle (`.art` and the transparent unlock tile use `border-radius: 50%`) so vinyl labels cut cleanly; the release-sheet thumbnail stays square (4px).
+- Glow (`#backdrop`) is 90% of the cover's rendered size, tracks the cover via `--player-art-size` / `--player-center-y`, sits 14% of the cover size above its centre, and uses `filter: blur(150px)` at full opacity. Figma's layer blur 300 corresponds to CSS `blur(150px)` (Figma's value is twice the CSS radius).
+- Artist / track type reduced for real devices: 16/20 and 18/22 (14/18 and 16/20 on screens ≤650px tall and in the release sheet's mini dock).
+- Browser geometry check updated: cover y 271, dock y 701 on 402 × 874, plus computed radius, font sizes, blur, glow size and glow-above-centre assertions.
