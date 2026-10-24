@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-24",
+  "baseline": "727198d23a5ce59c57baae710c015d79206ca1ea",
+  "unitTests": {
+    "passed": 18,
+    "failed": 0
+  },
+  "browsers": [
+    {
+      "engine": "chromium",
+      "version": "151.0.7922.34",
+      "scenariosPassed": 14
+    },
+    {
+      "engine": "webkit",
+      "version": "26.5",
+      "scenariosPassed": 14
+    }
+  ],
+  "syntaxChecks": "passed",
+  "realDiscogsWrites": 0,
+  "liveDiscogsVerification": "Blocked by Cloudflare Gateway before API JSON was available",
+  "realIPhoneAudio": "not verified"
+}
