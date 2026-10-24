@@ -62,3 +62,11 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - The player is never visible. An opaque shield always covers it (it previously showed through between cards while swiping), and the rare iOS "tap once for sound" fallback is now a fully transparent iframe over the cover artwork instead of the exposed YouTube tile.
 - Trade-off: no second iframe pre-buffers the next song, so a swipe may take a moment longer to start.
 - Embed host stays `https://www.youtube.com` (not youtube-nocookie). Premium in embeds depends on the browser's YouTube sign-in cookies being available to third-party iframes; that is a Safari/Home Screen storage setting, not app code.
+
+## 3.0.3 (quiet recovery and video preflight)
+
+- Routine Discogs retry/rate-limit messages stay out of the toast. Initial loading explains a reconnect inline; authentication, failed saves and exhausted discovery still show actionable errors.
+- Before discovery emits cards, public YouTube oEmbed metadata rejects missing/private videos (401/404/410). The preflight sends no credentials, uses at most three requests at once, and caches results locally (six hours for positive metadata, 24 hours for negative metadata).
+- Timeouts, network failures, 403, rate limits and server errors mean unknown availability, not a dead video. A 30-second cooldown prevents repeated probes during an outage. Unknown candidates remain usable.
+- Playback-confirmed missing/non-embeddable videos (100/101/150) are remembered and removed from the feed quietly. A dead upload cannot consume a track's deduplication key and hide a working alternate upload. HTML5/network and client-identification errors are retryable and never blacklist videos or trigger a rapid skip chain.
+- Metadata is not proof of playback in every region/device. Some restrictions are only reported by the player; those still use the quiet runtime recovery path. The single audible iframe is unchanged.
