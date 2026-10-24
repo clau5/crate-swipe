@@ -23,6 +23,22 @@ async function open(query='fixture=1') {await page.goto(base+'/?'+query);await p
 async function calls(){return page.evaluate(()=>window.crateFixture.api.calls.filter(c=>c.method!=='GET'));}
 try {
   await open();
+  await check('a paused feed stays paused after repeated release previews',async()=>{
+    await page.locator('#sound').click();
+    await page.locator('.card .art').first().click();
+    await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===2);
+    for(let i=0;i<2;i++) {
+      await page.locator('.release-meta').first().click();
+      await page.locator('[data-track="1"]').click();
+      await page.waitForFunction(()=>window.crateFixture.playing.source==='release');
+      await page.locator('#closeRelease').click();
+      assert.equal(await page.evaluate(()=>[2,5].includes(window.crateFixture.players[0].getPlayerState())),true,'preview must restore a paused feed');
+      // The real API sends a later CUED event after restoring a paused track.
+      await page.evaluate(()=>window.crateFixture.players[0].emitState(5));
+      assert.equal(await page.locator('#paused').isVisible(),true,'cued paused track keeps its pause indicator');
+    }
+    await open();
+  });
   await check('one sound tap, then every swipe and auto-next autoplays with sound (iOS gesture model)',async()=>{
     // Model iOS: unmuted playback is refused unless this player saw a real user gesture once.
     await page.evaluate(()=>{
