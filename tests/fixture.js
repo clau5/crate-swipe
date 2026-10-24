@@ -37,3 +37,8 @@ export class FakePlayer {
   getPlayerState(){return this.state;}getCurrentTime(){return this.time;}getDuration(){return this.vid==='eeeeeeeeeee'?260:229;}
   seekTo(time){this.time=time;}
 }
+export async function probeVideo(url, params) {
+  if (params.get('probe') === 'offline') throw Error('Simulated metadata outage');
+  const vid = new URL(new URL(url).searchParams.get('url')).searchParams.get('v');
+  return new Response(JSON.stringify({type:'video'}), {status:params.get('unavailable')?.split(',').includes(vid) ? 404 : 200});
+}

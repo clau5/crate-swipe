@@ -22,6 +22,47 @@ async function check(name,fn){await fn();results.push(name);console.log('PASS '+
 async function open(query='fixture=1') {await page.goto(base+'/?'+query);await page.waitForFunction(()=>!!window.crateFixture?.playing.song);await page.evaluate(()=>document.fonts.ready);}
 async function calls(){return page.evaluate(()=>window.crateFixture.api.calls.filter(c=>c.method!=='GET'));}
 try {
+  await check('unavailable videos are filtered before their cards enter the feed',async()=>{
+    await open('fixture=1&unavailable=aaaaaaaaaaa,bbbbbbbbbbb');
+    assert.equal(await page.locator('.card').count(),2);
+    assert.equal(await page.locator('#track').innerText(),'Somewhere new');
+    assert.equal(await page.locator('.card[aria-label="Tried and true"]').count(),0);
+    assert.equal(await page.locator('.card[aria-label="A quiet place"]').count(),0);
+    assert.equal(await page.locator('#status').innerText(),'');
+  });
+  await check('a metadata outage keeps usable tracks without a warning or a false blacklist',async()=>{
+    await open('fixture=1&probe=offline');assert.equal(await page.locator('.card').count(),4);
+    assert.equal(await page.locator('#track').innerText(),'Tried and true');assert.equal(await page.locator('#status').innerText(),'');
+  });
+  await check('late unavailability removes the failed card quietly and remembers it on reload',async()=>{
+    await open();await page.locator('#sound').click();
+    await page.evaluate(()=>window.crateFixture.players[0].events.onError({data:100}));
+    await page.waitForFunction(()=>window.crateFixture.playing.song?.vid==='bbbbbbbbbbb');
+    assert.equal(await page.locator('.card').count(),3);assert.equal(await page.locator('.card[aria-label="Tried and true"]').count(),0);
+    assert.equal(await page.locator('#status').innerText(),'');assert.equal((await calls()).length,0);
+    // DOM indices changed: the new active card still responds to a pause tap.
+    await page.locator('.card .art').first().click();await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===2);
+    await page.reload();await page.waitForFunction(()=>!!window.crateFixture?.playing.song);
+    assert.equal(await page.locator('.card[aria-label="Tried and true"]').count(),0);
+    await page.evaluate(()=>localStorage.removeItem('dx_stats'));
+  });
+  await check('temporary or configuration playback errors do not blacklist tracks or jump the feed',async()=>{
+    await open();
+    for(const code of [5,153]) {
+      await page.evaluate(code=>window.crateFixture.players[0].events.onError({data:code}),code);
+      assert.equal(await page.locator('#track').innerText(),'Tried and true');assert.equal(await page.locator('.card').count(),4);
+      assert.match(await page.locator('#status').innerText(),/couldn’t play/);
+    }
+    await page.reload();await page.waitForFunction(()=>!!window.crateFixture?.playing.song);
+    assert.equal(await page.locator('.card').count(),4);await page.evaluate(()=>localStorage.removeItem('dx_stats'));
+  });
+  await check('an exhausted playable feed stops cleanly instead of cycling through dead cards',async()=>{
+    await open('fixture=1&unavailable=bbbbbbbbbbb,ccccccccccc,ddddddddddd');
+    await page.evaluate(()=>window.crateFixture.players[0].events.onError({data:100}));
+    assert.equal(await page.locator('.card').count(),0);assert.equal(await page.locator('#dock').isVisible(),false);
+    assert.match(await page.locator('#emptyMsg').innerText(),/No more playable/);assert.equal(await page.locator('#status').innerText(),'');
+    await page.evaluate(()=>localStorage.removeItem('dx_stats'));
+  });
   await open();
   await check('a paused feed stays paused after repeated release previews',async()=>{
     await page.locator('#sound').click();
@@ -98,6 +139,7 @@ try {
     await page.locator('#feed').evaluate(el=>el.scrollTop=0);await page.waitForFunction(()=>window.crateFixture.active===0);
     await page.locator('.unlock').waitFor();await visible('waiting for the sound tap');
     await page.screenshot({path:output+'/never-visible-unlock.png'});
+    await page.evaluate(()=>localStorage.removeItem('dx_stats'));
     await open();
   });
   await check('pause during sound verification never reveals the YouTube tile',async()=>{
@@ -253,18 +295,22 @@ try {
   });
   await check('production entry: connect, discover, like, reload, replay and remove with mocked endpoints',async()=>{
     const isolated=await browser.newContext({viewport:{width:402,height:874},reducedMotion:'reduce'}), live=await isolated.newPage();
-    live.setDefaultTimeout(15000); const remote=new Map(),writes=[];
+    live.setDefaultTimeout(15000); const remote=new Map(),writes=[];let releaseRequests=0,retrying=false;
     live.on('pageerror',error=>errors.push(error.message));
     await live.route('**/*',async route=>{
       const request=route.request(),url=new URL(request.url());
       if(request.url().startsWith(base)) return route.continue();
       if(url.hostname==='www.youtube.com' && url.pathname==='/iframe_api') return route.fulfill({contentType:'text/javascript',body:`window.YT={Player:class extends (${FakePlayer.toString()}){constructor(id,options){super(options.events)}}};window.onYouTubeIframeAPIReady();`});
+      if(url.hostname==='www.youtube.com' && url.pathname==='/oembed') return route.fulfill({contentType:'application/json',body:JSON.stringify({type:'video'})});
       if(url.hostname!=='api.discogs.com') return route.abort();
       assert.equal(request.headers().authorization,'Discogs token=local-test-token');
       let body;
       if(url.pathname==='/oauth/identity') body={username:'browser-test'};
       else if(url.pathname==='/database/search') body={pagination:{pages:1,items:4},results:songs.map(s=>({id:s.releaseId,master_id:s.masterId,type:'release',title:s.artist+' - '+s.releaseTitle}))};
-      else if(url.pathname.startsWith('/releases/')) body=releases.get(Number(url.pathname.split('/').at(-1)));
+      else if(url.pathname.startsWith('/releases/')) {
+        if (++releaseRequests===2) {retrying=true;return route.fulfill({status:429,contentType:'application/json',body:'{}'});}
+        body=releases.get(Number(url.pathname.split('/').at(-1)));
+      }
       else if(request.method()==='GET' && url.pathname.includes('/wants')) body={pagination:{pages:1},wants:[...remote].map(([id,master_id])=>({id,basic_information:{master_id}}))};
       else if(['PUT','DELETE'].includes(request.method()) && url.pathname.includes('/wants/')) {
         const id=Number(url.pathname.split('/').at(-1));writes.push(request.method());
@@ -277,6 +323,8 @@ try {
       await live.locator('#closeSetup').click();await live.locator('#emptyAction').click();assert.equal(await live.locator('#setup').isVisible(),true);
       await live.locator('#tok').fill('local-test-token');await live.locator('#saveTok').click();await live.locator('#pick').waitFor({state:'visible'});
       await live.locator('#goBtn').click();await live.locator('#dock').waitFor({state:'visible'});await live.locator('#heart:not(:disabled)').waitFor();
+      for(let i=0;i<50&&!retrying;i++) await live.waitForTimeout(100);
+      assert.equal(retrying,true);assert.doesNotMatch(await live.locator('#status').innerText(),/retrying|interrupted|rate limit/i);
       await live.locator('#heart').click();await live.waitForFunction(()=>document.querySelector('#heart').getAttribute('aria-pressed')==='true');
       assert.deepEqual(writes,['PUT']);await live.reload();await live.locator('#sessionButton').click();await live.locator('[data-play="0"]').waitFor();
       await live.locator('[data-play="0"]').click();await live.locator('[data-remove="0"]:not(:disabled)').waitFor();await live.locator('[data-remove="0"]').click();
