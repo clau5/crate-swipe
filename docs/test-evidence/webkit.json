@@ -1,0 +1,22 @@
+{
+  "browser": "webkit",
+  "version": "26.5",
+  "results": [
+    "reference screen geometry and local assets",
+    "heart writes immediately and records the discovery",
+    "session replay and auto-next leave the feed index intact",
+    "session survives reload and changed filters",
+    "release replay updates the playing identity and YouTube link",
+    "new session clears the local view without deleting remote wants",
+    "failed add/removal leaves a retryable and consistent UI",
+    "failed wantlist refresh preserves session and can recover",
+    "modal focus is contained, Escape closes it and icons keep their intended sizes",
+    "responsive geometry: small phone, standard phone, desktop and long titles",
+    "onboarding and filters render without credentials or external requests",
+    "missing artwork and uncertain matching stay usable",
+    "double-tap and keyboard likes use the same immediate record toggle",
+    "production entry: connect, discover, like, reload, replay and remove with mocked endpoints"
+  ],
+  "errors": [],
+  "externalRequests": []
+}
