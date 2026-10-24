@@ -7,17 +7,20 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000">
 <title>Crate Swipe</title>
+<meta name="app-version" content="crate-swipe 2.1.0 (2026-10-24)">
 <style>
 :root{--bg:#000;--fg:#fff;--mut:#aaa;--acc:#ff2d55;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.35 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;overflow:hidden}
 button,input,select{font:inherit}
 a{color:#9cf}
-#feed{position:fixed;inset:0;overflow-y:scroll;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none}
+#feed{position:fixed;inset:0;z-index:2;overflow-y:scroll;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none}
 #feed::-webkit-scrollbar{display:none}
 .card{position:relative;height:100vh;height:100dvh;scroll-snap-align:start;scroll-snap-stop:always;overflow:hidden;user-select:none;-webkit-user-select:none}
-.card .bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(.45);transform:scale(1.1)}
+#backdrop{position:fixed;inset:-40px;z-index:0;background:#000 center/cover no-repeat;filter:blur(30px) brightness(.45);transform:scale(1.1);transition:background-image .2s}
+.card .bg{display:none}
 .card .slot{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;background:#000 center/cover no-repeat}
+body.vidon .card.act .slot{visibility:hidden} /* the real player (below the feed) shows through */
 .card .top{position:absolute;left:14px;right:14px;top:calc(var(--safe-t) + 62px);display:flex;gap:12px;align-items:center}
 .card .top img{width:64px;height:64px;border-radius:6px;object-fit:cover;background:#222;flex:none}
 .card .rel{font-size:13px;color:#ddd;min-width:0}
@@ -36,16 +39,30 @@ a{color:#9cf}
 .heartpop.go{opacity:1;transform:translate(-50%,-50%) scale(1)}
 #err{color:#ff8080;font-size:14px;margin-top:10px}
 .stats{font-size:12px;color:#bbb;background:#111;border-radius:8px;padding:10px;margin-top:14px;white-space:pre-wrap}
-#pA,#pB{position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;margin:0 auto;z-index:3;pointer-events:none;transition:opacity .15s;opacity:0}
+#pA,#pB{position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;margin:0 auto;z-index:1;pointer-events:none;transition:opacity .15s;opacity:0;overflow:hidden;background:#000}
 #pA.show,#pB.show{opacity:1}
-#pA.unlock,#pB.unlock{pointer-events:auto;outline:3px solid var(--acc)}
-#pA iframe,#pB iframe{width:100%;height:100%;border:0}
-body.panel #pA,body.panel #pB{top:calc(var(--safe-t) + 4px);transform:none;max-height:34vh}
+#pA.unlock,#pB.unlock{pointer-events:auto;outline:3px solid var(--acc);z-index:8}
+/* iframe is taller than its box: YouTube's title/share/watch-later strip (top) and logo/"more videos" strip (bottom) are cropped off */
+#pA iframe,#pB iframe{position:absolute;left:0;top:-64px;width:100%;height:calc(100% + 128px);border:0}
+.shield{position:absolute;inset:0;z-index:2} /* transparent: taps never reach YouTube's own overlays */
+.unlock .shield{display:none}
+#paused{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;font-size:64px;color:#fffd;text-shadow:0 2px 12px #000;pointer-events:none;display:none}
+body.panel #paused{top:calc(var(--safe-t) + 4px + min(17vh,28vw))}
+#scrub{position:fixed;left:8px;right:8px;top:calc(50% + min(28.125vw,30vh) - 12px);height:44px;z-index:7;display:none;align-items:center;gap:8px;padding:0 6px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}
+#scrub.on{display:flex}
+#scrub .tm{font-size:11px;color:#eee;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #000;min-width:34px;text-align:center;pointer-events:none}
+#scrub .trk{position:relative;flex:1;height:4px;border-radius:2px;background:#ffffff40;pointer-events:none;transition:height .1s}
+#scrub .fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:2px;background:var(--acc)}
+#scrub .knob{position:absolute;top:50%;left:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #0008}
+#scrub.drag .trk{height:8px}#scrub.drag .knob{width:22px;height:22px;margin:-11px 0 0 -11px}
+body.panel #scrub{top:calc(var(--safe-t) + 4px + min(34vh,56.25vw) - 38px);z-index:11}
+body.panel #pA,body.panel #pB{top:calc(var(--safe-t) + 4px);transform:none;max-height:34vh;z-index:5} /* above the feed, below the top bar */
 #bar{position:fixed;top:0;left:0;right:0;z-index:6;padding:calc(var(--safe-t) + 8px) 10px 8px;display:flex;gap:8px;align-items:center;background:linear-gradient(#000c,#0000)}
 #chip{flex:1;min-width:0;border:0;border-radius:18px;background:#fff2;color:#fff;padding:8px 12px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #status{font-size:11px;color:#ccc;max-width:45%;text-align:right}
 .pill{border:0;border-radius:18px;background:#fff2;color:#fff;padding:8px 12px}
 #sound{position:fixed;left:50%;bottom:calc(var(--safe-b) + 120px);transform:translateX(-50%);z-index:7;border:0;border-radius:24px;padding:12px 18px;background:var(--acc);color:#fff;font-weight:700;box-shadow:0 4px 20px #0008;display:none}
+body.panel #sound{bottom:auto;top:calc(var(--safe-t) + 4px + min(17vh,28vw));transform:translate(-50%,-50%);z-index:11}
 #hint{position:fixed;left:12px;right:12px;top:calc(50% + 32vw);z-index:7;text-align:center;font-weight:700;display:none;text-shadow:0 1px 4px #000}
 .sheet{position:fixed;inset:0;z-index:10;background:#000d;display:none;overflow:auto;padding:calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 24px)}
 .sheet.open{display:block}
@@ -76,7 +93,10 @@ body.panel #panel{display:block}
 <body>
 <div id="feed"></div>
 <div id="empty"><div class="spin" style="display:none" id="spin"></div><div id="emptyMsg">Pick a genre/style and a year to start.</div></div>
-<div id="pA"><div id="yt0"></div></div><div id="pB"><div id="yt1"></div></div>
+<div id="backdrop"></div>
+<div id="pA"><div id="yt0"></div><div class="shield"></div></div><div id="pB"><div id="yt1"></div><div class="shield"></div></div>
+<div id="paused">❚❚</div>
+<div id="scrub" aria-label="Seek"><span class="tm" id="tEl">0:00</span><div class="trk"><div class="fill"></div><div class="knob"></div></div><span class="tm" id="tDur">0:00</span></div>
 <div id="bar"><button id="chip">Pick genre &amp; year…</button><div id="status"></div></div>
 <button id="sound">🔊 Tap to turn sound on</button>
 <div id="hint">Tap the video once to start it with sound</div>
@@ -110,6 +130,7 @@ body.panel #panel{display:block}
   <div class="row" style="margin-top:14px"><button class="pill" id="resetSeen">Reset seen songs</button><button class="pill" id="changeTok">Change token</button><button class="pill" id="closePick">Close</button></div>
   <p class="small">Only YouTube videos already linked on Discogs releases are used (no YouTube search). Vinyl only. Swipe up/down (or ↑/↓ keys). Double-tap or ♥ adds the release to your Discogs wantlist; do it again to remove it. Keys: Space pause · L like · E explore · M mute.</p>
   <p class="small" id="seenCount"></p>
+  <p class="small">Version 2.1.0</p>
   <div class="stats" id="stats"></div>
   <button class="pill" id="resetStats" style="margin-top:8px">Reset stats</button>
 </div>
@@ -228,6 +249,23 @@ function slimRelease(r){ // what we keep in the cache
     tracklist:(r.tracklist||[]).map(t=>({position:t.position,title:t.title,duration:t.duration,type_:t.type_,artists:t.artists&&t.artists.map(a=>({name:a.name,anv:a.anv,join:a.join})),sub_tracks:t.sub_tracks&&t.sub_tracks.map(x=>({position:x.position,title:x.title,duration:x.duration,type_:x.type_}))})),
     videos:(r.videos||[]).map(v=>({uri:v.uri,title:v.title,duration:v.duration,embed:v.embed}))};
 }
+// ---- Feed order: never two songs from the same release/master back to back; spread them >= gap cards apart when the pool allows ----
+function songKeys(s){const k=['r'+s.releaseId];if(s.masterId)k.push('m'+s.masterId);return k;}
+// recent = songs already in the feed (most recent last). Picks uniformly among eligible songs, i.e. releases weighted by how many songs they have left.
+function pickNext(pool,recent,gap,rnd){rnd=rnd||Math.random;
+  const block=new Set();if(gap>0)recent.slice(-gap).forEach(s=>songKeys(s).forEach(k=>block.add(k)));
+  const ok=[];pool.forEach((s,i)=>{if(!songKeys(s).some(k=>block.has(k)))ok.push(i);});
+  return ok.length?ok[Math.floor(rnd()*ok.length)]:-1;}
+// Choose the next card. With a cushion of cards ahead we wait for more variety (the next release is ~1 s away) instead of relaxing the gap;
+// the gap is relaxed only as the viewer is about to run out of cards, and never to 0: two songs of one release are never back to back
+// (if only such songs are left at the very end of a dig, they are not shown).
+function chooseNext(pool,recent,o){const G=o.gap||6;const floor=o.ahead>=2?G:o.ahead===1?Math.min(3,G):1;
+  let i=-1;for(let g=G;g>=floor&&i<0;g--)i=pickNext(pool,recent,g,o.rnd);
+  return i;}
+// how much usable variety the pool holds: distinct releases not used in the last `gap` cards (a release with many songs counts as 2).
+// Used to decide when to keep fetching, so the dig never pauses while the pool only holds songs we can't place yet.
+function poolVariety(pool,recent,gap){const block=new Set();(recent||[]).slice(-(gap||0)).forEach(s=>songKeys(s).forEach(k=>block.add(k)));
+  const c=new Map();pool.forEach(s=>{if(songKeys(s).some(k=>block.has(k)))return;c.set(s.releaseId,(c.get(s.releaseId)||0)+1);});let n=0;for(const v of c.values())n+=Math.min(v,2);return n;}
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 
 // Rate-limited Discogs client: 60 req/min authenticated -> one request every 1.1 s, with priorities.
@@ -323,7 +361,7 @@ class Explorer{
     this.done=true;this.onProgress(this);
   }
 }
-if(typeof module!=='undefined')module.exports={norm,cleanTitle,mixName,matchTrack,songCheck,releaseToSongs,slimRelease,flattenTracks,ytId,parseDur,dice,artistString,Discogs,Explorer,shuffle,GENRES,STYLES};
+if(typeof module!=='undefined')module.exports={songKeys,pickNext,chooseNext,poolVariety,norm,cleanTitle,mixName,matchTrack,songCheck,releaseToSongs,slimRelease,flattenTracks,ytId,parseDur,dice,artistString,Discogs,Explorer,shuffle,GENRES,STYLES};
 /*CORE-END*/
 </script>
 
@@ -412,15 +450,20 @@ function start(){
   $('#chip').textContent=[opts.style||opts.genre||'All vinyl',opts.label,opts.country,years[0]===null?'any year':(years.length>1?years[0]+'–'+years[years.length-1]:years[0])].filter(Boolean).join(' · ');
   $('#empty').style.display='flex';$('#spin').style.display='block';$('#emptyMsg').textContent='Digging through Discogs…';
   ex=new Explorer(api,{genre:opts.genre,style:opts.style,label:opts.label,country:opts.country,years,wantIds,skipVid:skipSet,cache:idb,
-    shouldPause:()=>ahead()>=BUFFER,
+    shouldPause:()=>Math.max(0,cards.length-active-1)+poolVariety(pool,cards.slice(-GAP).map(c=>c.song),GAP)>=BUFFER,
     onSongs:(songs)=>{pool.push(...songs);fill();},
     onProgress:(x,err)=>{const s=x.state.stats;if(!/rate limit/.test($('#status').textContent)||!err)status(`${x.fetched} releases · ${s.songs||0} songs${x.total?' · ~'+x.total.toLocaleString()+' releases match':''}${err?' · '+err.message:''}${x.done?' · all done':''}`);
+      if(x.done)fill();
       if(x.done&&!cards.length){$('#spin').style.display='none';$('#emptyMsg').textContent=x.total>0?'No playable songs found for this search (no linked videos, or all seen). Try another style/year, or reset seen songs.':'Discogs found no vinyl releases for this search. Check the style/label/country spelling.';}}});
   ex.run();
 }
 // keep 3 cards built ahead of the visible one, picked randomly from the ready pool
+const GAP=6; // aim for >= 6 other cards between two songs of the same release or master
 function fill(){
-  while(pool.length&&cards.length-active<4){const i=Math.floor(Math.random()*pool.length);addCard(pool.splice(i,1)[0]);}
+  while(pool.length&&cards.length-active<4){
+    const i=chooseNext(pool,cards.slice(-GAP).map(c=>c.song),{gap:GAP,ahead:cards.length-active-1});
+    if(i<0)break; // wait for songs from other releases to stream in
+    addCard(pool.splice(i,1)[0]);}
   if(cards.length)$('#empty').style.display='none';
   if(active<0&&cards.length)setActive(0);
   else preloadNext();
@@ -449,9 +492,12 @@ function addCard(song){
 }
 const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.intersectionRatio>0.7){const i=cards.findIndex(c=>c.el===e.target);if(i>=0&&i!==active){dir=i>active?1:-1;setActive(i);}}});},{root:$('#feed'),threshold:[0.7]});
 let scrollT=null;
-$('#feed').addEventListener('scroll',()=>{wrap(cur).classList.remove('show');clearTimeout(scrollT);scrollT=setTimeout(()=>{if(active>=0&&ready[cur]&&P[cur].getPlayerState()===1)wrap(cur).classList.add('show');},180);},{passive:true});
+function showVid(on){wrap(cur).classList.toggle('show',on);document.body.classList.toggle('vidon',on);}
+$('#feed').addEventListener('scroll',()=>{showVid(false);clearTimeout(scrollT);scrollT=setTimeout(()=>{if(active>=0&&ready[cur]&&P[cur].getPlayerState()===1)showVid(true);},180);},{passive:true});
 function setActive(i){
-  active=i;const s=cards[i].song;closePanel();
+  if(cards[active])cards[active].el.classList.remove('act');
+  active=i;const s=cards[i].song;closePanel();cards[i].el.classList.add('act');
+  $('#backdrop').style.backgroundImage="url('"+(s.cover||'https://img.youtube.com/vi/'+s.vid+'/hqdefault.jpg').replace(/'/g,'%27')+"')";
   if(s.dead){go(dir);return;} // known dead (e.g. failed while preloading): skip straight on
   if(!seen.has(s.vid)){seen.add(s.vid);if(seen.size%5===0||seen.size<5)LS.set('dx_seen',[...seen].slice(-20000));}
   playSong(s);fill();
@@ -463,17 +509,18 @@ function go(d){dir=d>0?1:-1;let i=active+d;while(cards[i]&&cards[i].song.dead&&i
 const P=[null,null],ready=[false,false],loaded=[null,null];let cur=0,startTimer=null;
 const wrap=k=>$(k?'#pB':'#pA');
 window.onYouTubeIframeAPIReady=()=>{
-  const pv={playsinline:1,autoplay:0,mute:1,controls:1,rel:0,iv_load_policy:3,fs:0,enablejsapi:1};
+  // No native YouTube chrome: no controls bar, captions, annotations, fullscreen or keyboard; our own scrub bar replaces the controls.
+  const pv={playsinline:1,autoplay:0,mute:1,controls:0,cc_load_policy:0,iv_load_policy:3,fs:0,rel:0,disablekb:1,modestbranding:1,enablejsapi:1};
   if(location.protocol.startsWith('http'))pv.origin=location.origin;
   [0,1].forEach(k=>{P[k]=new YT.Player('yt'+k,{host:'https://www.youtube.com',width:'100%',height:'100%',playerVars:pv,
     events:{onReady:()=>{ready[k]=true;if(k===cur&&active>=0)playSong(cards[active].song);else preloadNext();},onStateChange:e=>onState(k,e),onError:e=>onErr(k,e)}});});
 };
 function startFor(s){const o=parseInt(opts.startAt)||0;return (s.duration&&o>s.duration-30)?0:o;}
 function playSong(s){
-  if(!ready[cur])return;
+  if(!ready[cur])return;$('#paused').style.display='none';
   const sb=1-cur;
   if(ready[sb]&&loaded[sb]===s.vid){ // swap to the preloaded player: instant start
-    P[cur].pauseVideo();wrap(cur).classList.remove('show','unlock');cur=sb;
+    P[cur].pauseVideo();wrap(cur).classList.remove('show','unlock');cur=sb;document.body.classList.remove('vidon');
     if(soundOn){P[cur].unMute();P[cur].setVolume(100);}else P[cur].mute();
     P[cur].playVideo();
   }else{
@@ -492,7 +539,9 @@ function preloadNext(){
 }
 function onState(k,e){
   if(k!==cur)return;
-  if(e.data===1){wrap(k).classList.add('show');clearTimeout(startTimer);$('#hint').style.display='none';
+  if(e.data===1||e.data===2)$('#paused').style.display=e.data===2?'block':'none';
+  if(e.data===1){showVid(true);clearTimeout(startTimer);$('#hint').style.display='none';
+    try{P[k].unloadModule('captions');P[k].unloadModule('cc');}catch(_){}
     if(soundOn&&P[k].isMuted())P[k].unMute();
     if(!P[k].isMuted()){soundOn=true;wrap(k).classList.remove('unlock');}
     if(!cards[active].counted){cards[active].counted=true;stats.played++;saveStats();}
@@ -507,7 +556,7 @@ function onErr(k,e){ // 2 bad id · 5 HTML5 error · 100 removed/private · 101/
   if(k===cur&&c&&cards[active]===c)go(dir); // the visible one died: skip immediately
   else if(k!==cur)preloadNext();
 }
-function needTap(){wrap(cur).classList.add('show','unlock');$('#hint').style.display='block';}
+function needTap(){wrap(cur).classList.add('show','unlock');document.body.classList.add('vidon');$('#hint').style.display='block';}
 function updateSoundBtn(){$('#sound').style.display=(ready[cur]&&!soundOn&&active>=0)?'block':'none';}
 $('#sound').onclick=()=>{
   if(!ready[cur])return;soundOn=true;P[cur].unMute();P[cur].setVolume(100);P[cur].playVideo();
@@ -515,7 +564,22 @@ $('#sound').onclick=()=>{
   updateSoundBtn();
 };
 function togglePlay(){if(!ready[cur])return;const st=P[cur].getPlayerState();if(st===1)P[cur].pauseVideo();else{if(soundOn)P[cur].unMute();P[cur].playVideo();}}
-function stopPlayers(){[0,1].forEach(k=>{wrap(k).classList.remove('show','unlock');if(ready[k])P[k].stopVideo();loaded[k]=null;});}
+function stopPlayers(){document.body.classList.remove('vidon');$('#paused').style.display='none';[0,1].forEach(k=>{wrap(k).classList.remove('show','unlock');if(ready[k])P[k].stopVideo();loaded[k]=null;});}
+
+// ---------- Our own scrub bar (YouTube's controls are hidden) ----------
+const scrub={el:$('#scrub'),drag:false,frac:0,lastSeek:0};
+function fmt(t){t=Math.max(0,Math.floor(t||0));const h=Math.floor(t/3600),m=Math.floor(t/60)%60,s=t%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s).padStart(2,'0');}
+function drawScrub(cur_,dur){const f=dur?Math.min(1,Math.max(0,cur_/dur)):0;scrub.el.querySelector('.fill').style.width=(f*100)+'%';scrub.el.querySelector('.knob').style.left=(f*100)+'%';$('#tEl').textContent=fmt(cur_);$('#tDur').textContent=fmt(dur);}
+function scrubFrac(e){const r=scrub.el.querySelector('.trk').getBoundingClientRect();return Math.min(1,Math.max(0,(e.clientX-r.left)/r.width));}
+function curDur(){try{return P[cur].getDuration()||0;}catch(_){return 0;}}
+setInterval(()=>{const on=active>=0&&ready[cur]&&!!loaded[cur];scrub.el.classList.toggle('on',on);if(!on||scrub.drag)return;
+  try{drawScrub(P[cur].getCurrentTime(),curDur());}catch(_){}},250);
+scrub.el.addEventListener('pointerdown',e=>{if(!ready[cur])return;e.preventDefault();e.stopPropagation();scrub.el.setPointerCapture(e.pointerId);scrub.drag=true;scrub.el.classList.add('drag');scrub.frac=scrubFrac(e);drawScrub(scrub.frac*curDur(),curDur());});
+scrub.el.addEventListener('pointermove',e=>{if(!scrub.drag)return;e.preventDefault();scrub.frac=scrubFrac(e);const d=curDur();drawScrub(scrub.frac*d,d);
+  const now=Date.now();if(now-scrub.lastSeek>300){scrub.lastSeek=now;try{P[cur].seekTo(scrub.frac*d,false);}catch(_){}}}); // live preview without buffering ahead
+function endScrub(e){if(!scrub.drag)return;scrub.drag=false;scrub.el.classList.remove('drag');const d=curDur();try{P[cur].seekTo(scrub.frac*d,true);if(P[cur].getPlayerState()!==2)P[cur].playVideo();}catch(_){} drawScrub(scrub.frac*d,d);}
+scrub.el.addEventListener('pointerup',endScrub);scrub.el.addEventListener('pointercancel',endScrub);
+['touchstart','touchmove','click','dblclick'].forEach(t=>scrub.el.addEventListener(t,e=>e.stopPropagation(),{passive:true}));
 
 // ---------- Likes: like adds the release (plain PUT); liking again removes it (DELETE) ----------
 function toggleLike(i,pop){const c=cards[i];if(!c)return;const on=!isLiked(c.song);
