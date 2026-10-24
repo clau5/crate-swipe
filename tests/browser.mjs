@@ -23,6 +23,67 @@ async function open(query='fixture=1') {await page.goto(base+'/?'+query);await p
 async function calls(){return page.evaluate(()=>window.crateFixture.api.calls.filter(c=>c.method!=='GET'));}
 try {
   await open();
+  await check('one sound tap, then every swipe and auto-next autoplays with sound (iOS gesture model)',async()=>{
+    // Model iOS: unmuted playback is refused unless this player saw a real user gesture once.
+    await page.evaluate(()=>{
+      const players=window.crateFixture.players;
+      window.crateIOS={refused:0,playerCount:players.filter(Boolean).length};
+      for(const q of players.filter(Boolean)) {
+        q.gestureOK=false;
+        const allowed=()=>q.muted||q.gestureOK||!!navigator.userActivation?.isActive;
+        q.playVideo=function(){if(!allowed()){window.crateIOS.refused++;return this.emitState(2);}if(!this.muted)this.gestureOK=true;this.emitState(1);};
+        q.loadVideoById=function({videoId,startSeconds=0}){const ok=allowed();if(ok&&!this.muted)this.gestureOK=true;if(!ok)window.crateIOS.refused++;this.vid=videoId;this.time=startSeconds;queueMicrotask(()=>this.emitState(ok?1:2));};
+      }
+    });
+    assert.equal(await page.evaluate(()=>window.crateIOS.playerCount),1,'exactly one YouTube player');
+    await page.locator('#sound').click();
+    const expectSound=async i=>{
+      await page.waitForFunction(i=>window.crateFixture.active===i,i);
+      await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
+      const state=await page.evaluate(()=>{const p=window.crateFixture.players[0];return {vid:p.vid,song:window.crateFixture.playing.song.vid,muted:p.isMuted()};});
+      assert.equal(state.vid,state.song);assert.equal(state.muted,false);
+      assert.equal(await page.locator('#sound').isVisible(),false,'no per-card sound button');
+      assert.equal(await page.locator('.unlock').count(),0);assert.equal(await page.locator('#hint').isVisible(),false);
+    };
+    await expectSound(0);
+    for(const i of [1,2]) {await page.locator('#feed').evaluate((el,i)=>el.scrollTop=874*i,i);await page.waitForTimeout(150);await expectSound(i);}
+    // A track ending moves to the next card on its own, still with sound.
+    await page.evaluate(()=>window.crateFixture.players[0].emitState(0));await expectSound(3);
+    await page.locator('#feed').evaluate(el=>el.scrollTop=874);await page.waitForTimeout(150);await expectSound(1);
+    assert.equal(await page.evaluate(()=>window.crateIOS.refused),0,'iOS never refused sound after the first tap');
+    await open();
+  });
+  await check('the YouTube player is never visible: playing, paused, buffering, ended, error, mid-swipe, unlock',async()=>{
+    // Paint the player area magenta through a stand-in iframe, then look for magenta pixels on screen.
+    await page.evaluate(()=>{const f=document.createElement('iframe');f.srcdoc='<body style="margin:0;background:#f0f"></body>';document.querySelector('#yt0').append(f);});
+    await page.locator('#pA iframe').evaluate(f=>new Promise(r=>f.contentDocument?.readyState==='complete'?r():f.addEventListener('load',r,{once:true})));
+    const magenta=async label=>{
+      const shot=(await page.screenshot()).toString('base64');
+      return page.evaluate(async b64=>{const img=new Image();img.src='data:image/png;base64,'+b64;await img.decode();
+        const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);
+        const d=x.getImageData(0,0,c.width,c.height).data;let n=0;for(let i=0;i<d.length;i+=4) if(d[i]>200&&d[i+1]<60&&d[i+2]>200) n++;return n;},shot);
+    };
+    const visible=async label=>assert.ok(await magenta()<20,'player visible while '+label);
+    // Sanity: the detector does see the player when it is exposed.
+    await page.addStyleTag({content:'#pA.expose{z-index:99!important}#pA.expose .shield{display:none}'});
+    await page.evaluate(()=>document.querySelector('#pA').classList.add('expose'));
+    assert.ok(await magenta()>1000,'detector should see an exposed player');
+    await page.evaluate(()=>document.querySelector('#pA').classList.remove('expose'));
+    const p='window.crateFixture.players[0]';
+    await page.locator('#sound').click();await visible('playing');
+    for(const [state,label] of [[2,'paused'],[3,'buffering'],[-1,'unstarted'],[5,'cued']]) {await page.evaluate(`${p}.emitState(${state})`);await visible(label);}
+    await page.locator('#feed').evaluate(el=>el.scrollTop=437);await page.waitForTimeout(100);await visible('mid-swipe');
+    await page.locator('#feed').evaluate(el=>el.scrollTop=874);await page.waitForFunction(()=>window.crateFixture.active===1);await visible('next card');
+    await page.evaluate(`${p}.events.onError({data:150})`);await page.waitForTimeout(100);await visible('error');
+    await page.evaluate(`${p}.emitState(0)`);await page.waitForTimeout(100);await visible('ended');
+    // iOS refusing sound arms the transparent tap target over the cover: still no video.
+    await page.evaluate(`${p}.playVideo=function(){this.emitState(2);};${p}.loadVideoById=function({videoId}){this.vid=videoId;queueMicrotask(()=>this.emitState(2));};`);
+    await page.evaluate(()=>window.crateFixture.players[0].events.onStateChange({data:2}));
+    await page.locator('#feed').evaluate(el=>el.scrollTop=0);await page.waitForFunction(()=>window.crateFixture.active===0);
+    await page.locator('.unlock').waitFor();await visible('waiting for the sound tap');
+    await page.screenshot({path:output+'/never-visible-unlock.png'});
+    await open();
+  });
   await check('pause during sound verification never reveals the YouTube tile',async()=>{
     await page.locator('#sound').click();
     await page.locator('.card .art').first().click();

@@ -410,8 +410,9 @@ button,a {
   border-radius:50%;
   animation:spin 1s linear infinite
 }
-/* Keep real, sized players for Safari; only expose the active iframe for sound unlock. */
-#pA,#pB {
+/* Keep one real, sized player for Safari, but never let any of it be seen: an opaque shield
+   always covers it, and the sound-unlock tap target is a fully transparent iframe over the cover. */
+#pA {
   position:fixed;
   left:50%;
   top:47.5%;
@@ -423,7 +424,7 @@ button,a {
   overflow:hidden;
   background:#000
 }
-#pA iframe,#pB iframe {
+#pA iframe {
   width:100%;
   height:calc(100% + 128px);
   position:absolute;
@@ -434,7 +435,8 @@ button,a {
 .shield {
   position:absolute;
   inset:0;
-  z-index:2
+  z-index:2;
+  background:#000
 }
 .unlock {
   pointer-events:auto!important;
@@ -442,10 +444,15 @@ button,a {
   width:var(--art)!important;
   height:var(--art)!important;
   border-radius:4px;
-  outline:2px solid white
+  outline:2px solid white;
+  background:transparent!important
 }
 .unlock .shield {
   display:none
+}
+/* Taps land on the real YouTube iframe (a genuine gesture for iOS), but only the cover is visible. */
+.unlock iframe {
+  opacity:0!important
 }
 #paused {
   position:fixed;
@@ -954,7 +961,7 @@ body.overlay #dock {
 #empty {
   z-index:3
 }
-#pA,#pB,#paused{top:var(--player-center-y,47.5%)}
-#pA.unlock,#pB.unlock{width:var(--player-art-size,var(--art))!important;height:var(--player-art-size,var(--art))!important}
+#pA,#paused{top:var(--player-center-y,47.5%)}
+#pA.unlock{width:var(--player-art-size,var(--art))!important;height:var(--player-art-size,var(--art))!important}
 #sound,body.overlay #sound{top:calc(var(--player-center-y,47.5%) + var(--player-art-size,var(--art))/2 - 50px);bottom:auto}
 #hint,body.overlay #hint{top:calc(var(--player-center-y,47.5%) + var(--player-art-size,var(--art))/2 + 12px)}

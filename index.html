@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="app-version" content="crate-swipe 3.0.0">
+<meta name="app-version" content="crate-swipe 3.0.1">
 <meta name="description" content="Dig through vinyl. Discover a track, save a record, find your next favourite.">
 <title>Crate Swipe</title>
 <link rel="icon" href="assets/icons/session.svg" type="image/svg+xml">
@@ -20,9 +20,8 @@
 <header id="bar"><button id="chip" aria-label="Change discovery filters">Pick genre & year…</button><button id="sessionButton" class="circle" aria-label="Open this session"><img src="assets/icons/session.svg" width="24" height="24" alt=""></button></header>
 <div id="status" role="status" aria-live="polite"></div>
 <div id="pA"><div id="yt0"></div><div class="shield"></div></div>
-<div id="pB"><div id="yt1"></div><div class="shield"></div></div>
 <div id="paused" aria-hidden="true">Ⅱ</div>
-<button id="sound" hidden>Tap to turn sound on</button><div id="hint" hidden>Tap the video once to allow sound on this device</div>
+<button id="sound" hidden>Tap to turn sound on</button><div id="hint" hidden>Tap the cover once to allow sound on this device</div>
 <footer id="dock" hidden aria-label="Now playing">
   <div class="identity"><div class="titles"><div class="artist" id="artist"></div><div class="track" id="track"></div></div><button class="like" id="heart" aria-label="Add record to wantlist" aria-pressed="false"><img src="assets/icons/heart-outline.svg" width="24" height="24" alt=""></button></div>
   <div class="progress"><div class="seek-track"><div id="seekFill"></div><input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek in track"></div><div class="times"><span id="elapsed">0:00</span><span id="duration">0:00</span></div></div>
@@ -55,7 +54,7 @@
   <div class="row" style="margin-top:14px"><button class="pill" id="resetSeen">Reset seen songs</button><button class="pill" id="changeTok">Change token</button></div>
   <p class="small">Only YouTube videos already linked on Discogs releases are used (no YouTube search). Vinyl only. Swipe up/down (or ↑/↓ keys). Tap the heart or double-tap the artwork to add the release to your Discogs wantlist; do it again to remove it. Keys: Space pause · L like · E explore · M mute.</p>
   <p class="small" id="seenCount"></p>
-  <p class="small">Version 3.0.0</p>
+  <p class="small">Version 3.0.1</p>
   <details><summary>Listening stats</summary><div class="stats" id="stats"></div><button class="pill" id="resetStats">Reset stats</button></details>
 
 </dialog>

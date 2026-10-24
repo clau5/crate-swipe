@@ -20,10 +20,12 @@ let pool = [], reserve = [], cards = [], active = -1, gap = 15, buffer = 30;
 let currentModal = null, returnPlayback = null, noticeTimer, opener;
 let releaseSong = null;
 let playing = {source:'feed', song:null, list:[], index:-1};
-const players = [null, null], ready = [false, false], loaded = [null, null];
-const unlocked = [false, false], blocked = [false, false];
+// One YouTube player for the whole session. iOS grants sound to the iframe that received the
+// first tap; reusing that iframe (loadVideoById) keeps the permission for every later swipe.
+const players = [null], ready = [false], loaded = [null];
+const unlocked = [false];
 let current = 0, soundOn = false, playRequested = false, startTimer, verifyTimer, soundTimer, seekDragging = false;
-const wrap = k => $(k ? '#pB' : '#pA');
+const wrap = () => $('#pA');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const https = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } };
 function fmt(value) { const t = Math.max(0, Math.floor(value || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; }
@@ -258,43 +260,25 @@ function play(song, source = 'feed', list = [], index = -1, time = null, paused 
   playing = {source,song,list,index}; setBackdrop(song); renderDock();
   requestAnimationFrame(syncGeometry);
   clearPlaybackTimers(); playRequested = !paused; $('#paused').style.display = 'none';
-  for (let k=0;k<2;k++) wrap(k).classList.remove('unlock');
-  $('#hint').hidden = true;
+  clearUnlock();
   if (!ready[current]) return;
-  const standby = 1-current;
+  const player = players[current];
   const offset = time ?? ((song.duration && Number(opts.startAt) > song.duration-30) ? 0 : Number(opts.startAt) || 0);
-  if (time === null && ready[standby] && loaded[standby] === song.vid && !(soundOn && blocked[standby])) {
-    const previous = current; players[previous].pauseVideo(); wrap(previous).classList.remove('unlock'); current = standby;
-    if (soundOn) { players[current].unMute(); players[current].setVolume(100); } else players[current].mute();
-    players[current].playVideo();
-    if (soundOn && !unlocked[current] && unlocked[previous]) verifyTimer = setTimeout(() => {
-      if (!playRequested || playing.song?.vid !== song.vid) return;
-      if (players[current].getPlayerState() !== 1 || players[current].isMuted()) {
-        blocked[current] = true; players[current].pauseVideo(); players[current].mute(); loaded[current] = null; current = previous;
-        players[current].unMute(); players[current].loadVideoById({videoId:song.vid,startSeconds:offset}); loaded[current] = song.vid;
-      }
-    },1500);
-  } else {
-    if (ready[standby]) players[standby].pauseVideo();
-    if (soundOn) { players[current].unMute(); players[current].setVolume(100); } else players[current].mute();
-    loaded[current] = song.vid;
-    if (paused) players[current].cueVideoById({videoId:song.vid,startSeconds:offset});
-    else players[current].loadVideoById({videoId:song.vid,startSeconds:offset});
+  // Same iframe every time: never swap players, so the first sound tap stays valid on iOS.
+  if (soundOn) { player.unMute(); player.setVolume(100); } else player.mute();
+  loaded[current] = song.vid;
+  if (paused) { player.cueVideoById({videoId:song.vid,startSeconds:offset}); $('#paused').style.display = 'block'; }
+  else {
+    player.loadVideoById({videoId:song.vid,startSeconds:offset});
+    startTimer = setTimeout(() => { const state = player.getPlayerState(); if (state !== 1 && state !== 3) needTap(); },3500);
   }
-  if (paused) { players[current].pauseVideo(); $('#paused').style.display = 'block'; }
-  else startTimer = setTimeout(() => { const state = players[current].getPlayerState(); if (state !== 1 && state !== 3) needTap(); },3500);
-  updateSound(); preload();
+  updateSound();
 }
 function nextSong() {
   if (playing.source === 'feed') return cards.slice(active+1).find(c=>!c.song.dead)?.song;
   return playing.list.slice(playing.index+1).find(s=>!deadIds.has(s.vid));
 }
-function preload() {
-  const standby = 1-current, next = nextSong();
-  if (!next || !ready[standby] || (soundOn && blocked[standby]) || loaded[standby] === next.vid) return;
-  players[standby].mute(); loaded[standby] = next.vid;
-  players[standby].cueVideoById({videoId:next.vid,startSeconds:Number(opts.startAt) || 0});
-}
+function preload() {} // Single-player mode: nothing to preload into a second iframe.
 function advance() {
   if (playing.source === 'feed') return go(1);
   const song = nextSong();
@@ -304,10 +288,12 @@ function advance() {
 function onState(k, event) {
   if (k !== current || !playing.song) return;
   $('#paused').style.display = event.data === 2 ? 'block' : 'none';
+  // Paused without the user asking (iOS refused sound): offer the one-time tap again, never a muted fallback.
+  if (event.data === 2 && playRequested && soundOn && !unlocked[k]) needTap();
   if (event.data === 1) {
     clearTimeout(startTimer);
     if (soundOn && players[k].isMuted()) players[k].unMute();
-    if (!players[k].isMuted()) { soundOn = true; unlocked[k] = true; blocked[k] = false; wrap(k).classList.remove('unlock'); $('#hint').hidden = true; }
+    if (!players[k].isMuted()) { soundOn = true; unlocked[k] = true; clearUnlock(); }
     if (!playing.counted) { playing.counted = true; stats.played++; saveStats(); }
     updateSound();
   }
@@ -325,18 +311,21 @@ function onError(k, event) {
 }
 function needTap() {
   if (!ready[current] || !playRequested) return;
-  if (currentModal && !['session','release'].includes(currentModal.id)) { soundOn = false; return; }
-  // An unlocked player never needs the intrusive first-time permission fallback again.
-  if (!soundOn || unlocked[current]) { soundOn = false; updateSound(); return; }
+  if (currentModal && !['session','release'].includes(currentModal.id)) return;
+  // Sound stays on: the user only ever turns it off with mute. If nothing has been unlocked yet,
+  // show the plain "turn sound on" button; otherwise arm the invisible tap target over the cover.
+  if (!soundOn) { updateSound(); return; }
   syncGeometry();
-  players[current].pauseVideo(); players[current].unMute(); wrap(current).classList.add('unlock');
+  players[current].unMute(); wrap(current).classList.add('unlock');
   // Keep the iframe in place: reparenting it can reload the player and lose Safari sound permission.
+  // The iframe is fully transparent; the user sees and taps the cover artwork only.
   $('#hint').hidden = false; $('#sound').hidden = true;
 }
+function clearUnlock() { wrap(current).classList.remove('unlock'); $('#hint').hidden = true; }
 function updateSound() { $('#sound').hidden = (currentModal && !['session','release'].includes(currentModal.id)) || !playing.song || soundOn || !ready[current] || wrap(current).classList.contains('unlock'); }
 function soundTap() {
   if (!ready[current]) return;
-  clearTimeout(soundTimer);
+  clearTimeout(soundTimer); clearUnlock();
   const k = current; playRequested = true; soundOn = true; players[k].unMute(); players[k].setVolume(100); players[k].playVideo();
   soundTimer = setTimeout(() => {
     if (k !== current || !playRequested) return;
@@ -349,8 +338,7 @@ function clearPlaybackTimers() {
   clearTimeout(startTimer); clearTimeout(verifyTimer); clearTimeout(soundTimer);
 }
 function pausePlayback() {
-  playRequested = false; clearPlaybackTimers();
-  wrap(current).classList.remove('unlock'); $('#hint').hidden = true;
+  playRequested = false; clearPlaybackTimers(); clearUnlock();
   players[current].pauseVideo(); updateSound();
 }
 function togglePlay() {
@@ -361,13 +349,13 @@ function togglePlay() {
 }
 function stopPlayers() {
   playRequested = false; clearPlaybackTimers();
-  for (let k=0;k<2;k++) { wrap(k).classList.remove('unlock'); if (ready[k]) players[k].stopVideo(); loaded[k] = null; }
+  clearUnlock(); if (ready[current]) players[current].stopVideo(); loaded[current] = null;
   $('#sound').hidden = true; $('#hint').hidden = true; $('#paused').style.display = 'none';
 }
 $('#sound').onclick = soundTap;
 function attachPlayers(factory) {
-  for (let k=0;k<2;k++) players[k] = factory(k, {
-    onReady:() => { ready[k] = true; if (k === current && playing.song) play(playing.song,playing.source,playing.list,playing.index); else preload(); },
+  const k = 0; players[k] = factory(k, {
+    onReady:() => { ready[k] = true; if (playing.song) play(playing.song,playing.source,playing.list,playing.index); },
     onStateChange:e => onState(k,e), onError:e => onError(k,e)
   });
 }
