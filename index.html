@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000">
+<title>Crate Swipe</title>
+<style>
+:root{--bg:#000;--fg:#fff;--mut:#aaa;--acc:#ff2d55;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.35 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;overflow:hidden}
+button,input,select{font:inherit}
+a{color:#9cf}
+#feed{position:fixed;inset:0;overflow-y:scroll;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none}
+#feed::-webkit-scrollbar{display:none}
+.card{position:relative;height:100vh;height:100dvh;scroll-snap-align:start;scroll-snap-stop:always;overflow:hidden;user-select:none;-webkit-user-select:none}
+.card .bg{position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(.45);transform:scale(1.1)}
+.card .slot{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;background:#000 center/cover no-repeat}
+.card .top{position:absolute;left:14px;right:14px;top:calc(var(--safe-t) + 62px);display:flex;gap:12px;align-items:center}
+.card .top img{width:64px;height:64px;border-radius:6px;object-fit:cover;background:#222;flex:none}
+.card .rel{font-size:13px;color:#ddd;min-width:0}
+.card .rel b{display:block;color:#fff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .info{position:absolute;left:14px;right:84px;bottom:calc(var(--safe-b) + 22px)}
+.card .artist{font-weight:700;font-size:17px}
+.card .track{font-size:22px;font-weight:800;line-height:1.15;margin:3px 0 6px;word-break:break-word}
+.card .meta{font-size:13px;color:var(--mut)}
+.card .pos{display:inline-block;background:#fff2;border-radius:4px;padding:0 5px;margin-right:6px;font-size:12px;color:#fff}
+.card .warn{color:#fc6}
+.side{position:absolute;right:10px;bottom:calc(var(--safe-b) + 20px);display:flex;flex-direction:column;gap:16px;align-items:center}
+.side button,.side a{width:56px;height:56px;border-radius:50%;border:0;background:#fff2;color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;text-decoration:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.side small{display:block;font-size:10px;margin-top:-12px;color:#ddd;text-align:center}
+.like.on{background:var(--acc)}
+.heartpop{position:absolute;left:50%;top:50%;font-size:110px;transform:translate(-50%,-50%) scale(.3);opacity:0;pointer-events:none;transition:all .35s;z-index:5}
+.heartpop.go{opacity:1;transform:translate(-50%,-50%) scale(1)}
+#err{color:#ff8080;font-size:14px;margin-top:10px}
+.stats{font-size:12px;color:#bbb;background:#111;border-radius:8px;padding:10px;margin-top:14px;white-space:pre-wrap}
+#pA,#pB{position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;margin:0 auto;z-index:3;pointer-events:none;transition:opacity .15s;opacity:0}
+#pA.show,#pB.show{opacity:1}
+#pA.unlock,#pB.unlock{pointer-events:auto;outline:3px solid var(--acc)}
+#pA iframe,#pB iframe{width:100%;height:100%;border:0}
+body.panel #pA,body.panel #pB{top:calc(var(--safe-t) + 4px);transform:none;max-height:34vh}
+#bar{position:fixed;top:0;left:0;right:0;z-index:6;padding:calc(var(--safe-t) + 8px) 10px 8px;display:flex;gap:8px;align-items:center;background:linear-gradient(#000c,#0000)}
+#chip{flex:1;min-width:0;border:0;border-radius:18px;background:#fff2;color:#fff;padding:8px 12px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#status{font-size:11px;color:#ccc;max-width:45%;text-align:right}
+.pill{border:0;border-radius:18px;background:#fff2;color:#fff;padding:8px 12px}
+#sound{position:fixed;left:50%;bottom:calc(var(--safe-b) + 120px);transform:translateX(-50%);z-index:7;border:0;border-radius:24px;padding:12px 18px;background:var(--acc);color:#fff;font-weight:700;box-shadow:0 4px 20px #0008;display:none}
+#hint{position:fixed;left:12px;right:12px;top:calc(50% + 32vw);z-index:7;text-align:center;font-weight:700;display:none;text-shadow:0 1px 4px #000}
+.sheet{position:fixed;inset:0;z-index:10;background:#000d;display:none;overflow:auto;padding:calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 24px)}
+.sheet.open{display:block}
+.sheet h2{margin:0 0 12px}
+.sheet label{display:block;margin:12px 0 4px;color:#ccc;font-size:13px}
+.sheet input,.sheet select{width:100%;padding:10px;border-radius:8px;border:1px solid #444;background:#111;color:#fff}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.go{margin-top:18px;width:100%;padding:13px;border:0;border-radius:10px;background:var(--acc);color:#fff;font-weight:700;font-size:16px}
+.small{font-size:12px;color:#aaa}
+#panel{position:fixed;left:0;right:0;bottom:0;top:calc(var(--safe-t) + 4px + min(34vh,56.25vw));z-index:9;background:#111;border-radius:14px 14px 0 0;overflow:auto;padding:14px 14px calc(var(--safe-b) + 24px);display:none}
+body.panel #panel{display:block}
+#panel .hd{display:flex;gap:12px;align-items:flex-start}
+#panel .hd img{width:96px;height:96px;object-fit:cover;border-radius:6px;background:#222}
+#panel .x{margin-left:auto;border:0;background:#fff2;color:#fff;border-radius:50%;width:34px;height:34px;flex:none}
+.tl{list-style:none;padding:0;margin:14px 0}
+.tl li{display:flex;gap:10px;align-items:center;padding:9px 6px;border-bottom:1px solid #222}
+.tl li.has{cursor:pointer}.tl li.has:hover{background:#fff1}
+.tl li.now{background:#ff2d5533}
+.tl .p{width:34px;color:#999;font-size:12px;flex:none}
+.tl .t{flex:1;min-width:0}
+.tl .d{color:#888;font-size:12px}
+.tl .v{width:22px;text-align:center;flex:none}
+#empty{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:30px;color:#ccc;z-index:1}
+.spin{width:28px;height:28px;border:3px solid #fff3;border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="feed"></div>
+<div id="empty"><div class="spin" style="display:none" id="spin"></div><div id="emptyMsg">Pick a genre/style and a year to start.</div></div>
+<div id="pA"><div id="yt0"></div></div><div id="pB"><div id="yt1"></div></div>
+<div id="bar"><button id="chip">Pick genre &amp; year…</button><div id="status"></div></div>
+<button id="sound">🔊 Tap to turn sound on</button>
+<div id="hint">Tap the video once to start it with sound</div>
+
+<div id="panel"></div>
+
+<div class="sheet" id="setup">
+  <h2>Discogs token</h2>
+  <p class="small">Paste your Discogs personal access token (Discogs → Settings → Developers → Generate new token). It stays only in this browser (localStorage) and is sent only to api.discogs.com.</p>
+  <label>Token</label><input id="tok" type="password" autocomplete="off" spellcheck="false">
+    <button class="go" id="saveTok">Check &amp; save</button>
+  <div id="err"></div>
+  <p class="small"><a href="https://www.discogs.com/settings/developers" target="_blank" rel="noopener">Open Discogs developer settings</a></p>
+</div>
+
+<div class="sheet" id="pick">
+  <h2>What to dig</h2>
+  <label>Genre</label>
+  <select id="genre"><option value="">Any genre</option></select>
+  <label>Style (pick or type)</label>
+  <input id="style" list="styles" placeholder="e.g. Techno, Deep House, Electro" autocapitalize="words">
+  <datalist id="styles"></datalist>
+  <div class="row"><div><label>Year from</label><input id="y1" type="number" inputmode="numeric" placeholder="1995"></div><div><label>Year to (optional)</label><input id="y2" type="number" inputmode="numeric" placeholder=""></div></div>
+  <div class="row"><div><label>Label (optional)</label><input id="label" placeholder="e.g. Tresor"></div><div><label>Country (optional)</label><input id="country" list="countries" placeholder="e.g. Germany"></div></div>
+  <datalist id="countries"><option value="Germany"><option value="UK"><option value="US"><option value="Netherlands"><option value="Belgium"><option value="France"><option value="Italy"><option value="Spain"><option value="Sweden"><option value="Japan"><option value="Canada"><option value="Europe"></datalist>
+  <label>Skip intro: start each song at</label>
+  <select id="startAt"><option value="0">0:00 (beginning)</option><option value="30">0:30</option><option value="60">1:00</option><option value="90">1:30</option></select>
+  <label><input type="checkbox" id="hideSeen" checked style="width:auto"> Don't repeat songs I've already seen (any session)</label>
+  <label><input type="checkbox" id="autoNext" checked style="width:auto"> Go to the next song when one ends</label>
+  <button class="go" id="goBtn">Dig</button>
+  <div class="row" style="margin-top:14px"><button class="pill" id="resetSeen">Reset seen songs</button><button class="pill" id="changeTok">Change token</button><button class="pill" id="closePick">Close</button></div>
+  <p class="small">Only YouTube videos already linked on Discogs releases are used (no YouTube search). Vinyl only. Swipe up/down (or ↑/↓ keys). Double-tap or ♥ adds the release to your Discogs wantlist; do it again to remove it. Keys: Space pause · L like · E explore · M mute.</p>
+  <p class="small" id="seenCount"></p>
+  <div class="stats" id="stats"></div>
+  <button class="pill" id="resetStats" style="margin-top:8px">Reset stats</button>
+</div>
+
+<script>
+/*CORE-START*/
+// ---- Pure logic shared by the browser app and the node test harness ----
+const GENRES=["Electronic","Hip Hop","Jazz","Rock","Funk / Soul","Pop","Latin","Reggae","Classical","Blues","Folk, World, & Country","Non-Music","Stage & Screen","Children's","Brass & Military"];
+const STYLES=["Techno","House","Deep House","Tech House","Minimal","Minimal Techno","Electro","Acid","Acid House","Detroit Techno","Dub Techno","Ambient","Breakbeat","Breaks","Progressive House","Trance","Hard Trance","Garage House","UK Garage","Italo-Disco","Disco","Nu-Disco","Electro House","Hardcore","Jungle","Drum n Bass","IDM","Experimental","Leftfield","Downtempo","Trip Hop","Ghetto","Ghetto House","Juke","Hard House","Hard Techno","Industrial","EBM","Synth-pop","New Wave","Italodance","Euro House","Eurodance","Hi NRG","Balearic","Dub","Broken Beat","Bass Music","Dubstep","Grime","Footwork","Tribal","Tribal House","Freestyle","Miami Bass","Bleep","Gabber","Happy Hardcore","Speed Garage","Afro House","Afrobeat","Funk","Soul","Jazz-Funk","Boom Bap","Abstract","Instrumental"];
+
+function norm(s){return (s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[’'`´]/g,'').replace(/[^a-z0-9]+/g,' ').trim();}
+function stripBrackets(s){return (s||'').replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/g,' ');}
+function bracketText(s){const m=(s||'').match(/\(([^)]*)\)|\[([^\]]*)\]/g)||[];return m.map(x=>x.slice(1,-1));}
+function cleanArtist(n){return (n||'').replace(/\s*\(\d+\)$/,'').replace(/\*$/,'').trim();}
+function artistString(arr){if(!arr||!arr.length)return '';let s='';arr.forEach((a,i)=>{s+=cleanArtist(a.anv||a.name);if(i<arr.length-1)s+=a.join&&a.join!==','?' '+a.join+' ':', ';});return s.replace(/\s+/g,' ').trim();}
+function ytId(uri){const m=(uri||'').match(/(?:v=|youtu\.be\/|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
+function parseDur(d){if(!d)return 0;const p=String(d).split(':').map(Number);if(p.some(isNaN))return 0;return p.reduce((a,b)=>a*60+b,0);}
+function bigrams(s){s=s.replace(/ /g,'');const m=new Map();for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);m.set(g,(m.get(g)||0)+1);}return m;}
+function dice(a,b){if(!a||!b)return 0;if(a===b)return 1;if(a.length<2||b.length<2)return 0;const A=bigrams(a),B=bigrams(b);let inter=0,na=0,nb=0;A.forEach(v=>na+=v);B.forEach(v=>nb+=v);A.forEach((v,k)=>{if(B.has(k))inter+=Math.min(v,B.get(k));});return 2*inter/(na+nb);}
+function sim(v,t){ // v = cleaned video title, t = normalized track title
+  if(!v||!t)return 0; if(v===t)return 1;
+  if(v.replace(/ /g,'')===t.replace(/ /g,''))return 0.97; // "pullover" vs "pull over"
+  if(t.length>=3&&(' '+v+' ').includes(' '+t+' '))return 0.82+0.18*Math.min(1,t.length/v.length);
+  return dice(v,t);
+}
+const NOISE=/\b(official|video|audio|music|hq|hd|4k|1080p|720p|vinyl|rip|12 ?inch|12|7|lp|ep|remaster(ed)?|reissue|full|track|new|exclusive|premiere|19[5-9]\d|20[0-3]\d)\b/g;
+const MIXNOISE=/\b(the|by|mixed|remixed|rmix|mix|version|remix|rmx|edit|feat|ft|featuring|original|19[5-9]\d|20[0-3]\d|hq|hd|official|video|audio|vinyl|12|a\d|b\d|c\d|d\d|side)\b/g;
+function cleanTitle(raw,names,labels){
+  let s=' '+norm(raw)+' ';
+  for(const n of names){const nn=norm(n);if(nn.length>1)s=s.split(' '+nn+' ').join(' ');}
+  for(const l of labels){const nl=norm(l);if(nl.length>2)s=s.split(' '+nl+' ').join(' ');}
+  return s.replace(NOISE,' ').replace(/\s+/g,' ').trim();
+}
+function mixName(title,names,labels){ // e.g. "Klaiff - So Good (Pitch Mix)" -> "pitch"
+  const parts=bracketText(title).map(x=>cleanTitle(x,names,labels).replace(MIXNOISE,' ').replace(/\s+/g,' ').trim()).filter(x=>x.length>=3);
+  return parts.join(' ');
+}
+const NON_SONG=/(full (album|ep|lp|vinyl|release|record)|all tracks|complete (album|ep)|dj set|live set|mix ?tape|minimix|megamix|continuous mix|(^|[^a-z])mixed by|boiler room|podcast|radio show|interview|unboxing|documentary)/i;
+function songCheck(v){ // null if it looks like one song, else the reason
+  const d=v.duration||0;
+  if(d>900)return 'long';            // > 15 min: whole side / mix / album
+  if(d>0&&d<30)return 'short';       // < 30 s: teaser / snippet
+  if(NON_SONG.test(v.title||''))return 'nonsong';
+  return null;
+}
+function flattenTracks(tl){const out=[];(tl||[]).forEach(t=>{if(t.type_==='index'&&t.sub_tracks)t.sub_tracks.forEach(s=>out.push(s));else if(!t.type_||t.type_==='track')out.push(t);});return out;}
+const HIGH=0.85,LOW=0.6;
+function matchTrack(video,release){
+  const tracks=flattenTracks(release.tracklist);
+  if(!tracks.length)return {track:null,score:0,conf:'none'};
+  const names=[];const addA=a=>{names.push(a.name,cleanArtist(a.name));if(a.anv)names.push(a.anv);};
+  (release.artists||[]).forEach(addA);tracks.forEach(t=>(t.artists||[]).forEach(addA));
+  (release.extraartists||[]).forEach(a=>names.push(cleanArtist(a.name)));
+  names.sort((a,b)=>b.length-a.length);
+  const labels=[];(release.labels||[]).forEach(l=>{labels.push(cleanArtist(l.name));if(l.catno)labels.push(l.catno);});
+  const vFull=cleanTitle(video.title,names,labels),vBase=cleanTitle(stripBrackets(video.title),names,labels);
+  const vMix=mixName(video.title,names,labels);
+  const vtNorm=' '+norm(video.title)+' ';
+  const posCount={};tracks.forEach(t=>{const np=norm(t.position);posCount[np]=(posCount[np]||0)+1;});
+  let best=null,bestS=0,posBest=null;
+  for(const t of tracks){
+    const tFull=norm(t.title),tBase=norm(stripBrackets(t.title));
+    // full title (incl. mix name) counts fully; base title only (mix ignored) is capped lower
+    let s=Math.max(sim(vFull,tFull),0.8*sim(vBase,tBase||tFull));
+    const tMix=mixName(t.title,names,labels);
+    if(vMix&&tMix){const ms=dice(vMix,tMix);if(ms>=0.6||vMix.includes(tMix)||tMix.includes(vMix))s+=0.15;else s-=0.25;} // different remix = different song
+    const td=parseDur(t.duration),vd=video.duration||0;
+    if(td&&vd){const df=Math.abs(td-vd);if(df<=4)s+=0.15;else if(df<=15)s+=0.06;else if(df>90)s-=0.12;}
+    let posHit=false;
+    if(t.position){const np=norm(t.position);
+      if(np.length>=2&&np.length<=3&&/\d/.test(np)&&vtNorm.includes(' '+np+' ')){s+=posCount[np]===1?0.5:0.12;posHit=posCount[np]===1;} // "(SIDE B1)", "A2"
+      else if(np.length===1&&vtNorm.includes(' side '+np+' ')){s+=posCount[np]===1?0.5:0.12;posHit=posCount[np]===1;}}
+    if(posHit)posBest=t;
+    if(s>bestS){bestS=s;best=t;}
+  }
+  if(tracks.length===1&&bestS<LOW)bestS=LOW; // single-track release: the video is almost surely that track
+  // only a side/position token matched (e.g. "Sonic Experiments 001 ... A2"): accept as a probable match when the title also names this release's artist, title or catalog no.
+  if(bestS<LOW&&posBest){const ctx=[...names,...labels.filter(x=>/\d/.test(x)),stripBrackets(release.title||'')].map(norm).filter(x=>x.length>=4);
+    if(ctx.some(x=>vtNorm.includes(' '+x+' ')||vtNorm.replace(/ /g,'').includes(x.replace(/ /g,'')))){best=posBest;bestS=LOW;}}
+  const conf=bestS>=HIGH?'high':bestS>=LOW?'low':'none';
+  return {track:conf==='none'?null:best,score:+bestS.toFixed(3),conf};
+}
+// Turn one release into song objects, applying dedupe against shared state.
+// state: {seenVid:Set, seenKey:Set, skipVid:{has(id)} (optional: seen earlier / known dead), stats:{}}
+function releaseToSongs(rel,hit,state){
+  const st=state.stats;const songs=[];const inc=k=>st[k]=(st[k]||0)+1;
+  const vids=(rel.videos||[]);st.videos=(st.videos||0)+vids.length;
+  const relArtist=artistString(rel.artists)||(hit&&hit.title||'').split(' - ')[0];
+  const label=(rel.labels&&rel.labels[0])?cleanArtist(rel.labels[0].name)+(rel.labels[0].catno&&rel.labels[0].catno!=='none'?' · '+rel.labels[0].catno:''):((hit&&hit.label&&hit.label[0])||'');
+  const cover=(hit&&hit.cover_image&&!/spacer\.gif/.test(hit.cover_image))?hit.cover_image:((rel.images&&rel.images[0]&&rel.images[0].uri)||'');
+  for(const v of vids){
+    const id=ytId(v.uri);
+    if(!id){inc('notYoutube');continue;}
+    if(v.embed===false){inc('noEmbed');continue;}
+    const bad=songCheck(v);if(bad){inc('skip_'+bad);continue;}
+    if(state.seenVid.has(id)){inc('dupVideo');continue;}
+    state.seenVid.add(id);
+    const m=matchTrack(v,rel);
+    const artist=m.track&&m.track.artists&&m.track.artists.length?artistString(m.track.artists):relArtist;
+    if(m.conf==='high'){ // only confident matches collapse different uploads of the same song
+      const key=norm(artist)+'|'+norm(m.track.title);
+      if(state.seenKey.has(key)){inc('dupSong');if(state.dupLog)state.dupLog.push(key+'  <=  '+v.title);continue;}
+      state.seenKey.add(key);
+    }
+    if(state.skipVid&&state.skipVid.has(id)){inc('skipKnown');continue;}
+    inc('songs');inc('conf_'+m.conf);
+    songs.push({vid:id,videoTitle:v.title||'',duration:v.duration||0,trackTitle:m.track?m.track.title.trim():null,position:m.track?m.track.position:null,conf:m.conf,score:m.score,
+      artist,releaseId:rel.id,masterId:rel.master_id||0,releaseTitle:rel.title,label,year:rel.year||(hit&&hit.year)||'',country:rel.country||'',cover,thumb:(hit&&hit.thumb)||cover,url:rel.uri||('https://www.discogs.com/release/'+rel.id)});
+  }
+  return songs;
+}
+function slimRelease(r){ // what we keep in the cache
+  return {id:r.id,title:r.title,artists:(r.artists||[]).map(a=>({name:a.name,anv:a.anv,join:a.join})),labels:(r.labels||[]).map(l=>({name:l.name,catno:l.catno})),
+    year:r.year,country:r.country,master_id:r.master_id,uri:r.uri,styles:r.styles,genres:r.genres,formats:(r.formats||[]).map(f=>({name:f.name,descriptions:f.descriptions})),
+    images:(r.images||[]).slice(0,1).map(i=>({uri:i.uri})),extraartists:(r.extraartists||[]).map(a=>({name:a.name})),
+    tracklist:(r.tracklist||[]).map(t=>({position:t.position,title:t.title,duration:t.duration,type_:t.type_,artists:t.artists&&t.artists.map(a=>({name:a.name,anv:a.anv,join:a.join})),sub_tracks:t.sub_tracks&&t.sub_tracks.map(x=>({position:x.position,title:x.title,duration:x.duration,type_:x.type_}))})),
+    videos:(r.videos||[]).map(v=>({uri:v.uri,title:v.title,duration:v.duration,embed:v.embed}))};
+}
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+// Rate-limited Discogs client: 60 req/min authenticated -> one request every 1.1 s, with priorities.
+class Discogs{
+  constructor(token,opts={}){this.token=token;this.gap=opts.gap||1100;this.q=[];this.busy=false;this.last=0;this.dry=!!opts.dryRun;this.ua=opts.userAgent;this.count=0;this.dryLog=[];
+    this.onAuthError=opts.onAuthError||(()=>{});this.onRateLimit=opts.onRateLimit||(()=>{});}
+  req(method,path,prio=1){return new Promise((res,rej)=>{this.q.push({method,path,prio,res,rej});this.q.sort((a,b)=>b.prio-a.prio);this._pump();});}
+  get(p,prio){return this.req('GET',p,prio);}
+  async _pump(){
+    if(this.busy)return;this.busy=true;
+    while(this.q.length){
+      const job=this.q.shift();
+      if(this.dry&&job.method!=='GET'){this.dryLog.push(job.method+' '+job.path);job.res({dryRun:true,method:job.method,path:job.path});continue;}
+      const wait=this.last+this.gap-Date.now();if(wait>0)await new Promise(r=>setTimeout(r,wait));
+      let tries=0;
+      for(;;){
+        this.last=Date.now();this.count++;
+        try{
+          const h={'Authorization':'Discogs token='+this.token};
+          if(this.ua)h['User-Agent']=this.ua;
+          const r=await fetch('https://api.discogs.com'+job.path,{method:job.method,headers:h});
+          if(r.status===429&&tries<6){tries++;const w=10000*tries;this.onRateLimit(w);await new Promise(x=>setTimeout(x,w));continue;}
+          if(r.status===401||r.status===403&&job.path.startsWith('/oauth')){this.onAuthError(r.status);job.rej(Object.assign(new Error('auth '+r.status),{status:r.status}));break;}
+          if(r.status>=500&&tries<2){tries++;await new Promise(x=>setTimeout(x,3000));continue;}
+          const txt=await r.text();let body={};try{body=txt?JSON.parse(txt):{};}catch(e){}
+          if(!r.ok){job.rej(Object.assign(new Error('HTTP '+r.status+(body.message?': '+body.message:'')),{status:r.status,body}));break;}
+          if(tries)this.onRateLimit(0);
+          job.res(body);break;
+        }catch(e){
+          // Discogs sends 401 (and possibly 429) without CORS headers, so the browser only sees a network error.
+          // Back off like a rate limit (10 s, 20 s, 30 s) and tell the UI, then give up.
+          if(tries<3){tries++;const w=10000*tries;this.onRateLimit(w,true);await new Promise(x=>setTimeout(x,w));continue;}
+          job.rej(e);break;}
+      }
+    }
+    this.busy=false;
+  }
+}
+
+// Explorer: pulls search pages in random order, skips repeat masters BEFORE fetching, fetches releases (cache first), emits songs.
+class Explorer{
+  constructor(api,opts){
+    this.api=api;this.o=opts;this.cache=opts.cache||null;this.state={seenVid:new Set(),seenKey:new Set(),skipVid:opts.skipVid||null,stats:{}};
+    this.seenMaster=new Set();this.pending=[];this.yearsLeft=shuffle((opts.years||[null]).slice());this.hits=[];
+    this.releases=new Map();this.stopped=false;this.total=0;this.scanned=0;this.fetched=0;this.cacheHits=0;this.done=false;this.wantIds=opts.wantIds||new Set();
+    this.onSongs=opts.onSongs||(()=>{});this.onProgress=opts.onProgress||(()=>{});this.maxReleases=opts.maxReleases||Infinity;this.shouldPause=opts.shouldPause||(()=>false);
+  }
+  qs(year,page){const p=new URLSearchParams({type:'release',format:'Vinyl',per_page:'100',page:String(page)});
+    for(const k of ['genre','style','label','country'])if(this.o[k])p.set(k,this.o[k]);if(year)p.set('year',String(year));return '/database/search?'+p.toString();}
+  async _cached(key,ttlDays,fetcher,slim){
+    if(this.cache){try{const c=await this.cache.get(key);if(c&&Date.now()-c.t<ttlDays*864e5){this.cacheHits++;return c.v;}}catch(e){}}
+    const v=await fetcher();const sv=slim?slim(v):v;
+    if(this.cache){try{await this.cache.put(key,sv);}catch(e){}}
+    return sv;
+  }
+  async _page(year,page){
+    const path=this.qs(year,page);
+    const d=await this._cached('s:'+path,7,()=>this.api.get(path,1),d=>({pagination:d.pagination,results:(d.results||[]).filter(r=>r.type==='release').map(r=>({id:r.id,type:r.type,master_id:r.master_id,title:r.title,year:r.year,label:r.label,cover_image:r.cover_image,thumb:r.thumb,country:r.country,in_wantlist:r.user_data&&r.user_data.in_wantlist}))}));
+    if(page===1){
+      const pages=Math.min(d.pagination?d.pagination.pages:1,100); // Discogs search stops at 10,000 results (100 pages x 100)
+      this.total+=d.pagination?d.pagination.items:0;
+      for(let p=2;p<=pages;p++)this.pending.push([year,p]);
+    }
+    const rs=d.results||[];
+    rs.forEach(r=>{if(r.in_wantlist)this.wantIds.add(r.id);});
+    // dedupe by master from the search results, before any release call
+    for(const r of shuffle(rs)){
+      if(r.master_id){if(this.seenMaster.has(r.master_id)){this.state.stats.sameMaster=(this.state.stats.sameMaster||0)+1;continue;}this.seenMaster.add(r.master_id);}
+      this.hits.push(r);
+    }
+  }
+  async _nextHits(){
+    if(this.yearsLeft.length&&(!this.pending.length||Math.random()<0.5)){const y=this.yearsLeft.pop();return this._page(y,1);}
+    if(this.pending.length){const i=Math.floor(Math.random()*this.pending.length);const [y,p]=this.pending.splice(i,1)[0];return this._page(y,p);}
+    this.done=true;
+  }
+  async run(){
+    while(!this.stopped){
+      if(this.shouldPause()){await new Promise(r=>setTimeout(r,400));continue;}
+      if(this.fetched>=this.maxReleases){this.done=true;break;}
+      if(!this.hits.length){try{await this._nextHits();}catch(e){this.onProgress(this,e);if(e.status===401)break;await new Promise(r=>setTimeout(r,3000));}
+        if(this.done&&!this.hits.length)break;continue;}
+      const hit=this.hits.shift();this.scanned++;
+      let rel;try{rel=await this._cached('r:'+hit.id,90,()=>this.api.get('/releases/'+hit.id,1),slimRelease);}catch(e){this.onProgress(this,e);continue;}
+      if(this.stopped)break;
+      this.fetched++;
+      if(rel.videos&&rel.videos.length)this.state.stats.releasesWithVideos=(this.state.stats.releasesWithVideos||0)+1;
+      this.releases.set(rel.id,{rel,hit});
+      const songs=releaseToSongs(rel,hit,this.state);
+      if(songs.length)this.onSongs(songs,this);
+      this.onProgress(this);
+    }
+    this.done=true;this.onProgress(this);
+  }
+}
+if(typeof module!=='undefined')module.exports={norm,cleanTitle,mixName,matchTrack,songCheck,releaseToSongs,slimRelease,flattenTracks,ytId,parseDur,dice,artistString,Discogs,Explorer,shuffle,GENRES,STYLES};
+/*CORE-END*/
+</script>
+
+<script>
+// ---------------- Browser UI ----------------
+const $=s=>document.querySelector(s);
+const LS={get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v);}catch(e){return d;}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
+const DRY=new URLSearchParams(location.search).has('dryrun');
+let api=null,ex=null,pool=[],cards=[],active=-1,dir=1,soundOn=false,likeBusy=new Set();
+let wantIds=new Set(),wantMasters=new Map(); // masterId -> wanted releaseId
+let seen=new Set(LS.get('dx_seen',[]));
+let stats=LS.get('dx_stats',{played:0,dead:0,codes:{},deadIds:[]});let deadIds=new Set(stats.deadIds||[]);
+let opts=Object.assign({genre:'Electronic',style:'Techno',label:'',country:'',y1:'1995',y2:'',startAt:'0',hideSeen:true,autoNext:true},LS.get('dx_opts',{}));
+const BUFFER=10; // ready songs kept ahead of the visible card
+
+// ---------- IndexedDB cache for search pages + releases (repeat sessions cost no API calls) ----------
+const CACHE_MAX=4000;
+const idb={db:null,open(){if(this.p)return this.p;this.p=new Promise(res=>{try{const r=indexedDB.open('crateswipe',1);r.onupgradeneeded=()=>{const s=r.result.createObjectStore('kv',{keyPath:'k'});s.createIndex('t','t');};r.onsuccess=()=>{this.db=r.result;res(this.db);};r.onerror=()=>res(null);}catch(e){res(null);}});return this.p;},
+  async get(k){const db=await this.open();if(!db)return null;return new Promise(res=>{const q=db.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null);});},
+  async put(k,v){const db=await this.open();if(!db)return;await new Promise(res=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put({k,v,t:Date.now()});tx.oncomplete=tx.onerror=()=>res();});this.puts=(this.puts||0)+1;if(this.puts%50===0)this.prune();},
+  async count(){const db=await this.open();if(!db)return 0;return new Promise(res=>{const q=db.transaction('kv').objectStore('kv').count();q.onsuccess=()=>res(q.result);q.onerror=()=>res(0);});},
+  async prune(){const db=await this.open();if(!db)return;const n=await this.count();if(n<=CACHE_MAX)return;let del=n-Math.floor(CACHE_MAX*0.9);
+    const tx=db.transaction('kv','readwrite');const c=tx.objectStore('kv').index('t').openCursor();c.onsuccess=()=>{const cur=c.result;if(cur&&del-->0){cur.delete();cur.continue();}};},
+  async clear(){const db=await this.open();if(db)db.transaction('kv','readwrite').objectStore('kv').clear();}};
+
+GENRES.forEach(g=>{const o=document.createElement('option');o.value=o.textContent=g;$('#genre').appendChild(o);});
+STYLES.forEach(s=>{const o=document.createElement('option');o.value=s;$('#styles').appendChild(o);});
+
+let statusT=null;
+function status(t,sticky){$('#status').textContent=t;}
+function saveStats(){stats.deadIds=[...deadIds].slice(-5000);LS.set('dx_stats',stats);}
+async function renderStats(){
+  const rate=stats.played?(100*stats.dead/(stats.played+stats.dead)).toFixed(1):'0';
+  const s=ex?ex.state.stats:{};
+  $('#stats').textContent=`Stats (this device)\nSongs played: ${stats.played}\nDead videos skipped: ${stats.dead} (${rate}% of attempts)\nBy YouTube error code: ${Object.entries(stats.codes).map(([k,v])=>k+': '+v).join(', ')||'none'}\n\nThis dig: ${ex?ex.fetched:0} releases (${ex?ex.cacheHits:0} from cache), ${s.songs||0} songs, ${s.sameMaster||0} repeat masters skipped before fetching, ${s.dupVideo||0} duplicate videos and ${s.dupSong||0} duplicate songs removed\nMatch confidence: high ${s.conf_high||0} · low ${s.conf_low||0} · unmatched ${s.conf_none||0}\nDiscogs API calls this session: ${api?api.count:0}\nCached records on device: ${await idb.count()} (cap ${CACHE_MAX})`;
+}
+function openPick(){for(const k of ['genre','style','label','country','y1','y2','startAt'])$('#'+k).value=opts[k]||'';
+  if(!['0','30','60','90'].includes(String(opts.startAt)))$('#startAt').value='0';
+  $('#hideSeen').checked=opts.hideSeen!==false;$('#autoNext').checked=opts.autoNext!==false;$('#seenCount').textContent=seen.size+' songs marked as seen on this device.';renderStats();$('#pick').classList.add('open');}
+$('#chip').onclick=openPick;$('#closePick').onclick=()=>$('#pick').classList.remove('open');
+$('#resetSeen').onclick=()=>{seen=new Set();LS.set('dx_seen',[]);$('#seenCount').textContent='Seen list cleared.';};
+$('#resetStats').onclick=()=>{stats={played:0,dead:0,codes:{},deadIds:[]};deadIds=new Set();saveStats();renderStats();};
+$('#changeTok').onclick=()=>{$('#pick').classList.remove('open');$('#setup').classList.add('open');};
+$('#saveTok').onclick=async()=>{
+  const t=$('#tok').value.trim();if(!t){$('#err').textContent='Paste your token first.';return;}
+  $('#err').textContent='Checking token…';
+  try{
+    // a bad token gets a 401 without CORS headers, which the browser reports as a network error: probe once, then check a public endpoint
+    let id;try{const r=await fetch('https://api.discogs.com/oauth/identity',{headers:{'Authorization':'Discogs token='+t}});id=await r.json();if(!r.ok)throw Object.assign(new Error('HTTP '+r.status),{status:r.status});}
+    catch(e){if(e.status)throw e;let pub=false;try{pub=(await fetch('https://api.discogs.com/')).ok;}catch(_){}
+      if(pub)throw Object.assign(new Error('auth'),{status:401});throw new Error('Discogs is unreachable from this browser');}
+    if(!id||!id.username)throw new Error('no username');
+    localStorage.setItem('dx_token',t);LS.set('dx_user',id.username);$('#tok').value='';$('#err').textContent='';
+    $('#setup').classList.remove('open');initApi();status('Signed in to Discogs as '+id.username);loadWants();openPick();
+  }catch(e){$('#err').textContent=e.status===401||/auth/.test(e.message)?'Discogs rejected this token (401). Generate a new one under Discogs → Settings → Developers and paste it again.':'Couldn\'t check the token ('+e.message+'). Check your connection and try again.';}
+};
+function user(){return LS.get('dx_user','namnmna');}
+function initApi(){const t=localStorage.getItem('dx_token');if(!t)return false;
+  api=new Discogs(t,{dryRun:DRY,onAuthError:()=>{status('Discogs token rejected');$('#err').textContent='Your saved token stopped working. Paste a new one.';$('#setup').classList.add('open');},
+    onRateLimit:(w,net)=>{status(w?(net?`Discogs not answering (rate limit, connection, or an expired token). Retrying in ${Math.round(w/1000)} s…`:`Discogs rate limit hit, waiting ${Math.round(w/1000)} s and retrying…`):'Back under the rate limit');}});return true;}
+
+// Whole wantlist at startup (paginated, highest priority after likes) for accurate liked state
+async function loadWants(){
+  const cached=LS.get('dx_wants',null);if(cached){wantIds=new Set(cached.ids);wantMasters=new Map(cached.masters);}
+  try{let page=1,pages=1;const ids=[],ms=[];
+    do{const d=await api.get('/users/'+encodeURIComponent(user())+'/wants?per_page=100&page='+page,2);pages=d.pagination?d.pagination.pages:1;
+      (d.wants||[]).forEach(w=>{ids.push(w.id);const m=w.basic_information&&w.basic_information.master_id;if(m)ms.push([m,w.id]);});page++;}while(page<=pages);
+    wantIds=new Set(ids);wantMasters=new Map(ms);LS.set('dx_wants',{ids,masters:ms,t:Date.now()});refreshLikes();
+  }catch(e){console.warn('wants',e);}
+}
+function isLiked(s){return wantIds.has(s.releaseId)||(s.masterId&&wantMasters.has(s.masterId));}
+function refreshLikes(){cards.forEach(c=>c.el.querySelector('.like').classList.toggle('on',isLiked(c.song)));}
+
+$('#goBtn').onclick=()=>{
+  opts={genre:$('#genre').value,style:$('#style').value.trim(),label:$('#label').value.trim(),country:$('#country').value.trim(),y1:$('#y1').value.trim(),y2:$('#y2').value.trim(),startAt:$('#startAt').value,hideSeen:$('#hideSeen').checked,autoNext:$('#autoNext').checked};
+  LS.set('dx_opts',opts);$('#pick').classList.remove('open');start();
+};
+const skipSet={has:id=>deadIds.has(id)||(opts.hideSeen!==false&&seen.has(id))};
+function ahead(){return pool.length+Math.max(0,cards.length-active-1);}
+function start(){
+  if(!api&&!initApi()){$('#setup').classList.add('open');return;}
+  if(ex)ex.stopped=true;
+  pool=[];cards=[];active=-1;$('#feed').innerHTML='';stopPlayers();
+  let years=[null];const a=parseInt(opts.y1),b=parseInt(opts.y2);
+  if(a&&b){const lo=Math.min(a,b),hi=Math.min(Math.max(a,b),lo+60);years=[];for(let y=lo;y<=hi;y++)years.push(y);}else if(a)years=[a];
+  $('#chip').textContent=[opts.style||opts.genre||'All vinyl',opts.label,opts.country,years[0]===null?'any year':(years.length>1?years[0]+'–'+years[years.length-1]:years[0])].filter(Boolean).join(' · ');
+  $('#empty').style.display='flex';$('#spin').style.display='block';$('#emptyMsg').textContent='Digging through Discogs…';
+  ex=new Explorer(api,{genre:opts.genre,style:opts.style,label:opts.label,country:opts.country,years,wantIds,skipVid:skipSet,cache:idb,
+    shouldPause:()=>ahead()>=BUFFER,
+    onSongs:(songs)=>{pool.push(...songs);fill();},
+    onProgress:(x,err)=>{const s=x.state.stats;if(!/rate limit/.test($('#status').textContent)||!err)status(`${x.fetched} releases · ${s.songs||0} songs${x.total?' · ~'+x.total.toLocaleString()+' releases match':''}${err?' · '+err.message:''}${x.done?' · all done':''}`);
+      if(x.done&&!cards.length){$('#spin').style.display='none';$('#emptyMsg').textContent=x.total>0?'No playable songs found for this search (no linked videos, or all seen). Try another style/year, or reset seen songs.':'Discogs found no vinyl releases for this search. Check the style/label/country spelling.';}}});
+  ex.run();
+}
+// keep 3 cards built ahead of the visible one, picked randomly from the ready pool
+function fill(){
+  while(pool.length&&cards.length-active<4){const i=Math.floor(Math.random()*pool.length);addCard(pool.splice(i,1)[0]);}
+  if(cards.length)$('#empty').style.display='none';
+  if(active<0&&cards.length)setActive(0);
+  else preloadNext();
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function addCard(song){
+  const el=document.createElement('section');el.className='card';const idx=cards.length;
+  const yt='https://img.youtube.com/vi/'+song.vid+'/hqdefault.jpg';
+  const trackHtml=song.trackTitle?`<span class="pos">${esc(song.position||'')}</span>`+esc(song.trackTitle):esc(song.videoTitle);
+  const metaHtml=song.conf==='high'?'▶ '+esc(song.videoTitle):song.conf==='low'?'<span class="warn">Probable match</span> · ▶ '+esc(song.videoTitle):'<span class="warn">Couldn\'t match this video to a track, showing its YouTube title</span>';
+  el.innerHTML=`<div class="bg" style="background-image:url('${esc(song.cover||yt)}')"></div>
+  <div class="slot" style="background-image:url('${yt}')"></div>
+  <div class="top"><img src="${esc(song.thumb||song.cover)}" alt="" loading="lazy"><div class="rel"><b>${esc(song.releaseTitle)}</b>${esc(song.label)}${song.year?' · '+esc(song.year):''}${song.country?' · '+esc(song.country):''}</div></div>
+  <div class="info"><div class="artist">${esc(song.artist)}</div><div class="track">${trackHtml}</div><div class="meta">${metaHtml}</div></div>
+  <div class="side"><button class="like" title="Add/remove release on wantlist">♥</button><small>Want</small>
+  <button class="exp" title="Explore release">💿</button><small>Release</small>
+  <a class="ytl" href="https://www.youtube.com/watch?v=${song.vid}" target="_blank" rel="noopener" title="Open in YouTube">▶︎</a><small>YouTube</small></div>
+  <div class="heartpop">♥</div>`;
+  el.querySelector('.like').classList.toggle('on',isLiked(song));
+  el.querySelector('.like').onclick=e=>{e.stopPropagation();toggleLike(idx,false);};
+  el.querySelector('.exp').onclick=e=>{e.stopPropagation();openPanel(idx);};
+  let lastTap=0,tapT=null;
+  el.addEventListener('click',e=>{if(e.target.closest('.side,.top a'))return;const now=Date.now();
+    if(now-lastTap<300){clearTimeout(tapT);lastTap=0;toggleLike(idx,true);}else{lastTap=now;tapT=setTimeout(()=>{if(idx===active)togglePlay();},300);}});
+  $('#feed').appendChild(el);cards.push({el,song});io.observe(el);
+}
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.intersectionRatio>0.7){const i=cards.findIndex(c=>c.el===e.target);if(i>=0&&i!==active){dir=i>active?1:-1;setActive(i);}}});},{root:$('#feed'),threshold:[0.7]});
+let scrollT=null;
+$('#feed').addEventListener('scroll',()=>{wrap(cur).classList.remove('show');clearTimeout(scrollT);scrollT=setTimeout(()=>{if(active>=0&&ready[cur]&&P[cur].getPlayerState()===1)wrap(cur).classList.add('show');},180);},{passive:true});
+function setActive(i){
+  active=i;const s=cards[i].song;closePanel();
+  if(s.dead){go(dir);return;} // known dead (e.g. failed while preloading): skip straight on
+  if(!seen.has(s.vid)){seen.add(s.vid);if(seen.size%5===0||seen.size<5)LS.set('dx_seen',[...seen].slice(-20000));}
+  playSong(s);fill();
+}
+function go(d){dir=d>0?1:-1;let i=active+d;while(cards[i]&&cards[i].song.dead&&i>0&&i<cards.length-1)i+=dir;i=Math.max(0,Math.min(cards.length-1,i));if(i!==active&&cards[i])cards[i].el.scrollIntoView({behavior:'smooth'});}
+
+// ---------- Two YouTube players: the visible one plays, the other has the next song cued ----------
+// Never more than 2 iframes. Both are real www.youtube.com embeds (not youtube-nocookie) so a signed-in Premium session can apply.
+const P=[null,null],ready=[false,false],loaded=[null,null];let cur=0,startTimer=null;
+const wrap=k=>$(k?'#pB':'#pA');
+window.onYouTubeIframeAPIReady=()=>{
+  const pv={playsinline:1,autoplay:0,mute:1,controls:1,rel:0,iv_load_policy:3,fs:0,enablejsapi:1};
+  if(location.protocol.startsWith('http'))pv.origin=location.origin;
+  [0,1].forEach(k=>{P[k]=new YT.Player('yt'+k,{host:'https://www.youtube.com',width:'100%',height:'100%',playerVars:pv,
+    events:{onReady:()=>{ready[k]=true;if(k===cur&&active>=0)playSong(cards[active].song);else preloadNext();},onStateChange:e=>onState(k,e),onError:e=>onErr(k,e)}});});
+};
+function startFor(s){const o=parseInt(opts.startAt)||0;return (s.duration&&o>s.duration-30)?0:o;}
+function playSong(s){
+  if(!ready[cur])return;
+  const sb=1-cur;
+  if(ready[sb]&&loaded[sb]===s.vid){ // swap to the preloaded player: instant start
+    P[cur].pauseVideo();wrap(cur).classList.remove('show','unlock');cur=sb;
+    if(soundOn){P[cur].unMute();P[cur].setVolume(100);}else P[cur].mute();
+    P[cur].playVideo();
+  }else{
+    if(soundOn){P[cur].unMute();P[cur].setVolume(100);}else P[cur].mute();
+    P[cur].loadVideoById({videoId:s.vid,startSeconds:startFor(s)});loaded[cur]=s.vid;
+  }
+  clearTimeout(startTimer);
+  startTimer=setTimeout(()=>{const st=P[cur].getPlayerState();if(st!==1&&st!==3)needTap();},3500);
+  updateSoundBtn();preloadNext();
+}
+function preloadNext(){
+  const sb=1-cur;if(!ready[sb]||active<0)return;
+  let i=active+1;while(cards[i]&&cards[i].song.dead)i++;
+  const n=cards[i];if(!n||loaded[sb]===n.song.vid)return;
+  P[sb].mute();P[sb].cueVideoById({videoId:n.song.vid,startSeconds:startFor(n.song)});loaded[sb]=n.song.vid;
+}
+function onState(k,e){
+  if(k!==cur)return;
+  if(e.data===1){wrap(k).classList.add('show');clearTimeout(startTimer);$('#hint').style.display='none';
+    if(soundOn&&P[k].isMuted())P[k].unMute();
+    if(!P[k].isMuted()){soundOn=true;wrap(k).classList.remove('unlock');}
+    if(!cards[active].counted){cards[active].counted=true;stats.played++;saveStats();}
+    updateSoundBtn();}
+  if(e.data===0&&opts.autoNext!==false)go(1);
+}
+function onErr(k,e){ // 2 bad id · 5 HTML5 error · 100 removed/private · 101/150 embedding disabled
+  const vid=loaded[k];const c=cards.find(c=>c.song.vid===vid);
+  stats.dead++;stats.codes[e.data]=(stats.codes[e.data]||0)+1;deadIds.add(vid);saveStats();
+  if(c){c.song.dead=true;c.el.querySelector('.meta').innerHTML='<span class="warn">Video unavailable (YouTube error '+e.data+'), skipped</span>';}
+  loaded[k]=null;
+  if(k===cur&&c&&cards[active]===c)go(dir); // the visible one died: skip immediately
+  else if(k!==cur)preloadNext();
+}
+function needTap(){wrap(cur).classList.add('show','unlock');$('#hint').style.display='block';}
+function updateSoundBtn(){$('#sound').style.display=(ready[cur]&&!soundOn&&active>=0)?'block':'none';}
+$('#sound').onclick=()=>{
+  if(!ready[cur])return;soundOn=true;P[cur].unMute();P[cur].setVolume(100);P[cur].playVideo();
+  setTimeout(()=>{if(P[cur].isMuted()||P[cur].getPlayerState()!==1){soundOn=false;needTap();}updateSoundBtn();},900);
+  updateSoundBtn();
+};
+function togglePlay(){if(!ready[cur])return;const st=P[cur].getPlayerState();if(st===1)P[cur].pauseVideo();else{if(soundOn)P[cur].unMute();P[cur].playVideo();}}
+function stopPlayers(){[0,1].forEach(k=>{wrap(k).classList.remove('show','unlock');if(ready[k])P[k].stopVideo();loaded[k]=null;});}
+
+// ---------- Likes: like adds the release (plain PUT); liking again removes it (DELETE) ----------
+function toggleLike(i,pop){const c=cards[i];if(!c)return;const on=!isLiked(c.song);
+  if(pop){const h=c.el.querySelector('.heartpop');h.textContent=on?'♥':'💔';h.classList.add('go');setTimeout(()=>h.classList.remove('go'),600);}
+  setLike(c.song,on);}
+async function setLike(s,on){
+  if(likeBusy.has(s.releaseId))return;likeBusy.add(s.releaseId);
+  const prevIds=new Set(wantIds),prevMs=new Map(wantMasters);
+  // when un-liking, remove whichever version of this record is actually on the wantlist
+  const target=on?s.releaseId:(wantIds.has(s.releaseId)?s.releaseId:(s.masterId&&wantMasters.get(s.masterId)));
+  if(on){wantIds.add(s.releaseId);if(s.masterId)wantMasters.set(s.masterId,s.releaseId);}
+  else{wantIds.delete(target);if(s.masterId&&wantMasters.get(s.masterId)===target)wantMasters.delete(s.masterId);}
+  refreshLikes();
+  try{
+    const path='/users/'+encodeURIComponent(user())+'/wants/'+target;
+    await api.req(on?'PUT':'DELETE',path,3);
+    status((DRY?'DRY RUN, not sent: ':'')+(on?'Added to wantlist':'Removed from wantlist')+(DRY?' ('+(on?'PUT ':'DELETE ')+path+')':''));
+    LS.set('dx_wants',{ids:[...wantIds],masters:[...wantMasters],t:Date.now()});
+  }catch(e){wantIds=prevIds;wantMasters=prevMs;refreshLikes();status('Wantlist update failed: '+e.message);}
+  likeBusy.delete(s.releaseId);
+}
+
+// ---------- Explore release panel ----------
+async function openPanel(i){
+  const c=cards[i];if(!c)return;const s=c.song;let rel=ex&&ex.releases.get(s.releaseId);rel=rel?rel.rel:null;
+  if(!rel){const cc=await idb.get('r:'+s.releaseId);rel=cc?cc.v:null;}
+  if(!rel){try{rel=await api.get('/releases/'+s.releaseId,3);}catch(e){return;}}
+  const tracks=flattenTracks(rel.tracklist);
+  const vids=(rel.videos||[]).map(v=>({v,id:ytId(v.uri),m:matchTrack(v,rel)})).filter(x=>x.id&&v_ok(x));
+  function v_ok(x){return x.v.embed!==false&&!deadIds.has(x.id);}
+  const byTrack=new Map();vids.forEach(x=>{if(x.m.track&&!byTrack.has(x.m.track))byTrack.set(x.m.track,x);});
+  const used=new Set([...byTrack.values()].map(x=>x.id));
+  const other=vids.filter(x=>!used.has(x.id));
+  const p=$('#panel');
+  p.innerHTML=`<div class="hd"><img src="${esc(s.cover)}" alt=""><div><b>${esc(artistString(rel.artists))}</b><br>${esc(rel.title)}<div class="small">${esc((rel.labels||[]).map(l=>cleanArtist(l.name)+(l.catno?' – '+l.catno:'')).join(', '))}<br>${esc(rel.year||'')} · ${esc(rel.country||'')} · ${esc((rel.styles||rel.genres||[]).join(', '))}<br>${esc((rel.formats||[]).map(f=>f.name+(f.descriptions?' ('+f.descriptions.join(', ')+')':'')).join('; '))}</div></div><button class="x">✕</button></div>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="pill pl">${isLiked(s)?'♥ On wantlist (tap to remove)':'♡ Add to wantlist'}</button><a class="pill" style="text-decoration:none" href="${esc(rel.uri||s.url)}" target="_blank" rel="noopener">Open on Discogs</a></div>
+  <ul class="tl">${tracks.map(t=>{const x=byTrack.get(t);return `<li class="${x?'has':''}" data-v="${x?x.id:''}"><span class="p">${esc(t.position)}</span><span class="t">${esc(t.title)}${t.artists?'<div class="small">'+esc(artistString(t.artists))+'</div>':''}</span><span class="d">${esc(t.duration||'')}</span><span class="v">${x?'▶':''}</span></li>`;}).join('')}</ul>
+  ${other.length?'<div class="small">Other linked videos</div><ul class="tl">'+other.map(x=>`<li class="has" data-v="${x.id}"><span class="p"></span><span class="t">${esc(x.v.title)}</span><span class="d">${x.v.duration?Math.floor(x.v.duration/60)+':'+String(x.v.duration%60).padStart(2,'0'):''}</span><span class="v">▶</span></li>`).join('')+'</ul>':''}
+  ${!vids.length?'<p class="small">No playable videos linked on this release.</p>':''}`;
+  p.querySelector('.x').onclick=closePanel;
+  p.querySelector('.pl').onclick=async()=>{await setLike(s,!isLiked(s));p.querySelector('.pl').textContent=isLiked(s)?'♥ On wantlist (tap to remove)':'♡ Add to wantlist';};
+  p.querySelectorAll('li.has').forEach(li=>li.onclick=()=>{p.querySelectorAll('li.now').forEach(n=>n.classList.remove('now'));li.classList.add('now');playSong({vid:li.dataset.v,duration:0});});
+  p.querySelectorAll('li').forEach(li=>{if(li.dataset.v===s.vid)li.classList.add('now');});
+  document.body.classList.add('panel');
+}
+function closePanel(){document.body.classList.remove('panel');}
+
+document.addEventListener('keydown',e=>{
+  if(e.target.matches('input,select'))return;
+  if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();go(1);}
+  else if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();go(-1);}
+  else if(e.key===' '){e.preventDefault();togglePlay();}
+  else if(e.key==='l'||e.key==='L'){toggleLike(active,true);}
+  else if(e.key==='e'||e.key==='E'){document.body.classList.contains('panel')?closePanel():openPanel(active);}
+  else if(e.key==='Escape'){closePanel();}
+  else if(e.key==='m'||e.key==='M'){if(!ready[cur])return;if(P[cur].isMuted()){soundOn=true;P[cur].unMute();}else{soundOn=false;P[cur].mute();}updateSoundBtn();}
+});
+
+// boot
+(function(){const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);})();
+if(DRY)status('DRY RUN: likes are not sent');
+if(!initApi()){$('#setup').classList.add('open');}else{loadWants();if(opts.style||opts.genre||opts.label){start();}else openPick();}
+</script>
+</body>
+</html>
