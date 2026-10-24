@@ -55,3 +55,10 @@ Rollback is a revert to the upstream static files. New session storage keys can 
 | webkit | 26.5 | 14 |
 
 See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-evidence/webkit.json`.
+
+## 3.0.1 (iPhone playback fixes)
+
+- One YouTube player for the whole session. iOS grants sound to the iframe that received the first tap; 3.0 alternated between two iframes, so the never-tapped one was refused sound and the fallback turned sound off (`soundOn = false`), leaving every later card muted until tapped. Swipes and auto-next now call `loadVideoById` on the same unlocked player, and sound is never turned off automatically — only pause and mute are user controls.
+- The player is never visible. An opaque shield always covers it (it previously showed through between cards while swiping), and the rare iOS "tap once for sound" fallback is now a fully transparent iframe over the cover artwork instead of the exposed YouTube tile.
+- Trade-off: no second iframe pre-buffers the next song, so a swipe may take a moment longer to start.
+- Embed host stays `https://www.youtube.com` (not youtube-nocookie). Premium in embeds depends on the browser's YouTube sign-in cookies being available to third-party iframes; that is a Safari/Home Screen storage setting, not app code.
