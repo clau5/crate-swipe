@@ -1,6 +1,8 @@
 import {GENRES, STYLES, Explorer, Discogs, primaryPick, chooseNext, adaptiveGap, poolVariety, flattenTracks, matchTrack, ytId, artistString, releaseToSongs} from './core.js';
-import {SessionDiscoveries, trackKey} from './session.js';
+import {SessionDiscoveries, GuestDiscoveries, guestStatus, trackKey} from './session.js';
 import {VideoAvailability} from './video-availability.js';
+import {CatalogueClient} from './catalogue-client.js';
+import {sharedCatalogueToken} from './config.js';
 
 const $ = selector => document.querySelector(selector);
 const storage = {
@@ -16,11 +18,13 @@ let opts = {...defaults, ...storage.get('dx_opts', {})};
 let seen = new Set(storage.get('dx_seen', []));
 let stats = storage.get('dx_stats', {played:0, dead:0, codes:{}, deadIds:[]});
 let deadIds = new Set(stats.deadIds || []);
-let api, model, explorer, fixtureData;
+const catalogue = new CatalogueClient(sharedCatalogueToken,{dryRun});
+let api, accountAPI, model, guestSession, explorer, fixtureData, connecting = false;
+const discoveryClient = {get:(...args)=>api.get(...args)};
 let videoAvailability = new VideoAvailability({storage});
-let feedGeneration = 0, recoveringAt = null, discoveryError = false, lastDiscoveryNotice = 0;
+let feedGeneration = 0, recoveringAt = null, discoveryError = false, guestServiceUnavailable = false, lastDiscoveryNotice = 0;
 let pool = [], reserve = [], cards = [], active = -1, gap = 15, buffer = 30;
-let currentModal = null, returnPlayback = null, noticeTimer, opener;
+let currentModal = null, returnPlayback = null, setupReturn = null, noticeTimer, opener;
 let releaseSong = null;
 let playing = {source:'feed', song:null, list:[], index:-1};
 // One YouTube player for the whole session. iOS grants sound to the iframe that received the
@@ -68,7 +72,7 @@ const cache = {
 
 function show(dialog) {
   if (currentModal === dialog) return;
-  if (currentModal) hide();
+  if (currentModal) hide({restorePlayback:false,returnSetup:false});
   opener = document.activeElement;
   currentModal = dialog;
   document.body.classList.add('overlay');
@@ -82,13 +86,17 @@ function show(dialog) {
   updateSound();
   requestAnimationFrame(syncGeometry);
 }
-function hide() {
+function hide(options) {
+  if (currentModal === $('#setup') && setupReturn && options?.returnSetup !== false) {
+    const back = setupReturn; setupReturn = null;
+    hide({restorePlayback:false,returnSetup:false}); show(back); return;
+  }
   const old = currentModal; if (!old) return;
   currentModal = null; old.close();
   $('#dockHome').after($('#dock')); document.body.classList.remove('overlay');
   $('#veil').hidden = true;
   for (const el of [$('#feed'),$('#bar'),$('#empty')]) el.inert = false;
-  if (returnPlayback) {
+  if (returnPlayback && options?.restorePlayback !== false) {
     const saved = returnPlayback; returnPlayback = null;
     if (saved.source === 'feed' && deadIds.has(saved.song.vid)) {
       playing = saved; discardUnavailable(saved.song.vid);
@@ -118,10 +126,21 @@ async function openPick() {
   show($('#pick'));
 }
 $('#chip').onclick = openPick;
-$('#emptyAction').onclick = () => model ? openPick() : show($('#setup'));
+function openSetup() {
+  setupReturn = currentModal;
+  $('#saveTok').textContent = guestSession?.session.items.length ? 'Connect & save finds' : 'Connect Discogs';
+  $('#err').textContent = ''; show($('#setup'));
+}
+$('#emptyAction').onclick = () => $('#emptyAction').dataset.connect ? openSetup() : openPick();
 $('#resetSeen').onclick = () => { seen.clear(); storage.set('dx_seen', []); $('#seenCount').textContent = 'Seen songs cleared.'; };
 $('#resetStats').onclick = () => { stats = {played:0,dead:0,codes:{},deadIds:[]}; deadIds.clear(); videoAvailability.clear(); saveStats(); openPick(); };
-$('#changeTok').onclick = () => { if (model?.pending.size) return notify('Wait for your wantlist update to finish.'); show($('#setup')); };
+$('#changeTok').onclick = () => { if (connecting || model?.pending.size || guestSession?.syncing) return notify('Wait for your save to finish.'); openSetup(); };
+$('#useGuest').onclick = () => {
+  if (connecting || model?.pending.size || guestSession?.syncing) return;
+  try { localStorage.removeItem('dx_token'); localStorage.removeItem('dx_user'); } catch {}
+  model = guestSession; api = catalogue; accountAPI = null; hide(); renderDock(); renderSession();
+  if (!playing.song) openPick();
+};
 $('#goBtn').onclick = () => {
   const values = Object.fromEntries(['genre','style','label','country','y1','y2','startAt'].map(k => [k, $('#' + k).value.trim()]));
   for (const k of ['y1','y2']) if (values[k] && (!/^\d{4}$/.test(values[k]) || +values[k] < 1900 || +values[k] > new Date().getFullYear() + 1)) return notify('Enter a valid four-digit year.');
@@ -129,23 +148,23 @@ $('#goBtn').onclick = () => {
   opts = {...values,hideSeen:$('#hideSeen').checked,autoNext:$('#autoNext').checked}; storage.set('dx_opts', opts); hide(); start();
 };
 function connect(token, username) {
-  if (explorer) explorer.stopped = true;
   const client = new Discogs(token, {dryRun, onAuthError:() => {
-    if (api !== client) return;
+    if (accountAPI !== client) return;
     if (model) { model.health = 'unknown'; model.changed(); }
     notify('Your Discogs token was rejected. Reconnect in filters.', 10000);
   }, onRateLimit:wait => {
-    if (api !== client || (cards.length && recoveringAt === null)) return;
+    if (accountAPI !== client || (cards.length && recoveringAt === null)) return;
     // With no feed yet, explain the delay inline instead of raising a repeated toast.
     if (wait) $('#emptyMsg').textContent = 'Discogs is reconnecting. Retrying…';
     else if ($('#emptyMsg').textContent.startsWith('Discogs is reconnecting.')) $('#emptyMsg').textContent = 'Digging through Discogs…';
   }});
-  api = client;
+  api = client; accountAPI = client;
   model = new SessionDiscoveries(username, storage, (...args) => client.req(...args), () => { renderDock(); renderSession(); });
-  loadWants();
+  const account = model; renderDock(); renderSession();
+  return loadWants().then(()=>account);
 }
 async function loadWants() {
-  const account = model, client = api; if (!account) return;
+  const account = model, client = accountAPI; if (!account || account.isGuest || !client) return;
   await account.refresh(async () => {
     const records = []; let page = 1, pages = 1;
     do {
@@ -160,17 +179,23 @@ async function loadWants() {
   else if (account === model && $('#status').textContent.startsWith('Wantlist unavailable.')) notify('');
 }
 $('#tokenForm').onsubmit = async event => {
-  event.preventDefault(); if (model?.pending.size) return notify('Wait for your wantlist update to finish.');
+  event.preventDefault(); if (connecting || model?.pending.size || guestSession?.syncing) return notify('Wait for your save to finish.');
   const token = $('#tok').value.trim(); if (!token) return;
-  $('#saveTok').disabled = true; $('#err').textContent = 'Checking your token…';
+  connecting = true; $('#saveTok').disabled = true; $('#err').textContent = 'Checking your token…';
   try {
-    const response = await fetch('https://api.discogs.com/oauth/identity', {headers:{Authorization:'Discogs token=' + token}});
+    const response = await fetch('https://api.discogs.com/oauth/identity', {headers:{Authorization:'Discogs token=' + token},signal:AbortSignal.timeout(15000)});
     const identity = await response.json();
     if (!response.ok || !identity.username) throw Error('identity');
-    localStorage.setItem('dx_token', token); storage.set('dx_user', identity.username);
-    $('#tok').value = ''; $('#err').textContent = ''; connect(token, identity.username); hide(); openPick();
+    let remembered = true;
+    try { localStorage.setItem('dx_token', token); remembered = storage.set('dx_user', identity.username); } catch { remembered = false; }
+    $('#tok').value = ''; $('#err').textContent = 'Saving to @' + identity.username + '…';
+    const account = await connect(token, identity.username);
+    if (account.health === 'ready' && guestSession.unsaved(account.username).length) await guestSession.syncTo(account);
+    hide({restorePlayback:false,returnSetup:false}); setupReturn = null;
+    if (playing.song || reviewItems().length) { show($('#session')); renderSession(); } else openPick();
+    if (!remembered) notify('Connected for this visit. This browser couldn’t remember your token.',10000);
   } catch { $('#err').textContent = 'Couldn’t connect to Discogs. Check your token and connection, then try again.'; }
-  finally { $('#saveTok').disabled = false; }
+  finally { connecting = false; $('#saveTok').disabled = false; }
 };
 
 function artHTML(song) {
@@ -186,41 +211,46 @@ function setBackdrop(song) {
   $('#backdrop').style.backgroundImage = src ? `url("${src.replace(/["\\\n\r]/g, '')}")` : 'none';
 }
 async function start() {
-  if (!model) return show($('#setup'));
+  if (!model) return;
   if (explorer) explorer.stopped = true;
-  const generation = ++feedGeneration; recoveringAt = null; discoveryError = false;
+  const generation = ++feedGeneration; recoveringAt = null; discoveryError = false; guestServiceUnavailable = false;
   observer.disconnect();
-  stopPlayers(); pool = []; reserve = []; cards = []; active = -1; gap = 15; buffer = 30;
+  stopPlayers(); pool = []; reserve = []; cards = []; active = -1; gap = 15; buffer = model.isGuest ? 5 : 30;
   playing = {source:'feed',song:null,list:[],index:-1}; $('#feed').replaceChildren(); renderDock();
   const from = Number(opts.y1), to = Number(opts.y2); let years = [null];
   if (from && to) { const lo = Math.min(from,to), hi = Math.max(from,to); years = Array.from({length:hi-lo+1}, (_,i) => lo+i); } else if (from || to) years = [from || to];
   const yearLabel = years[0] === null ? 'Any year' : years.length > 1 ? `${years[0]}–${years.at(-1)}` : years[0];
   $('#chip').textContent = [opts.style || opts.genre || 'All vinyl',yearLabel,opts.label,opts.country].filter(Boolean).join(' · ');
-  $('#empty').hidden = false; $('#spin').hidden = false; $('#emptyAction').hidden = true; $('#emptyMsg').textContent = 'Digging through Discogs…';
+  $('#empty').hidden = false; $('#spin').hidden = false; $('#emptyAction').hidden = true; $('#emptyAction').dataset.connect = ''; $('#emptyAction').textContent = 'Choose genre & year'; $('#emptyMsg').textContent = 'Digging through Discogs…';
   if (fixture) {
     const checks = await Promise.all(fixtureData.songs.map(s => videoAvailability.check(s.vid)));
     if (generation !== feedGeneration) return;
     fixtureData.songs.forEach((s,i) => { if (checks[i] !== false && !deadIds.has(s.vid)) addCard({...s}); });
     fill(); $('#spin').hidden = true; return;
   }
-  const next = new Explorer(api, {...opts, years, cache, skipVid:{has:id => deadIds.has(id) || (opts.hideSeen !== false && seen.has(id))},
+  const next = new Explorer(discoveryClient, {...opts, years, cache,hitTarget:model.isGuest?30:300, skipVid:{has:id => deadIds.has(id) || (opts.hideSeen !== false && seen.has(id))},
     checkVideo:id => videoAvailability.check(id),
     shouldPause:() => Math.max(0,cards.length-active-1) + poolVariety(pool,cards.slice(-gap).map(c=>c.song),gap) >= buffer,
-    onSongs:(songs, x) => { if (explorer !== x) return; const choice = primaryPick(songs); pool.push(choice.pick); reserve.push(...choice.rest); fill(); },
+    onSongs:(songs, x) => { if (explorer !== x) return; guestServiceUnavailable = false; const choice = primaryPick(songs); pool.push(choice.pick); reserve.push(...choice.rest); fill(); },
     onProgress:(x, error) => {
       if (explorer !== x || x.stopped) return;
-      if (x.total) { gap = adaptiveGap(x.total,x.fetched,x.withSongs); buffer = Math.max(10,2*gap); }
+      if (x.total) { gap = adaptiveGap(x.total,x.fetched,x.withSongs); buffer = model.isGuest ? 5 : Math.max(10,2*gap); }
       if (x.done && reserve.length) { pool.push(...reserve); reserve = []; }
       if (x.done) fill();
       if (error) {
         discoveryError = true;
+        if (model.isGuest && !cards.length) {
+          guestServiceUnavailable = true;
+          $('#emptyMsg').textContent = 'Guest discovery is unavailable right now. Connect your Discogs account to keep digging.';
+          $('#emptyAction').hidden = false; $('#emptyAction').textContent = 'Connect Discogs'; $('#emptyAction').dataset.connect = '1';
+        }
         // Background retries stay quiet while there are tracks to browse.
         if ((!cards.length || recoveringAt !== null) && Date.now()-lastDiscoveryNotice > 60000) {
           lastDiscoveryNotice = Date.now(); notify('Can’t load tracks right now. Retrying…',10000);
         }
       } else discoveryError = false;
       if (params.has('debug')) $('#stats').textContent = JSON.stringify({fetched:x.fetched,stats:x.state.stats,gap,buffer,pool:pool.length},null,2);
-      if (x.done && !cards.length) { $('#spin').hidden = true; $('#emptyAction').hidden = false; $('#emptyMsg').textContent = x.total ? 'No playable tracks for this dig. Try another filter or reset seen songs.' : 'No vinyl records found. Try another style or year.'; }
+      if (x.done && !cards.length && !guestServiceUnavailable) { $('#spin').hidden = true; $('#emptyAction').hidden = false; $('#emptyMsg').textContent = x.total ? 'No playable tracks for this dig. Try another filter or reset seen songs.' : 'No vinyl records found. Try another style or year.'; }
     }});
   explorer = next; next.run().catch(() => notify('Discovery stopped. Change your filters to try again.'));
 }
@@ -418,31 +448,44 @@ function initYouTube() {
 }
 
 function renderDock() {
+  $('#changeTok').textContent = model?.isGuest ? 'Connect Discogs' : 'Change account';
   const releaseButton = $('#releaseLike');
   if (releaseButton && releaseSong && model) {
-    releaseButton.textContent = model.has(releaseSong) ? 'Remove from wantlist' : 'Add to wantlist';
-    releaseButton.disabled = model.health !== 'ready' || model.busy(releaseSong);
+    const target = actionModel(releaseSong);
+    releaseButton.textContent = target.has(releaseSong) ? target.isGuest ? 'Remove from session' : 'Remove from wantlist' : target.isGuest ? 'Save to session' : 'Add to wantlist';
+    releaseButton.disabled = target.health !== 'ready' || target.busy(releaseSong) || guestSession?.syncing;
   }
   const song = playing.song; $('#dock').hidden = !song || (currentModal && !['session','release'].includes(currentModal.id));
   if (!song) return;
   $('#artist').textContent = song.artist; $('#track').textContent = song.trackTitle || song.videoTitle;
   $('#youtube').href = 'https://www.youtube.com/watch?v=' + song.vid; $('#videoTitle').textContent = song.videoTitle;
-  const wanted = !!model?.has(song), busy = !!model?.busy(song);
+  const target = model && actionModel(song);
+  const wanted = !!target?.has(song), busy = !!target?.busy(song) || !!guestSession?.syncing;
   $('#heart').classList.toggle('on',wanted); $('#heart').setAttribute('aria-pressed',String(wanted)); $('#heart').setAttribute('aria-busy',String(busy));
-  $('#heart').setAttribute('aria-label',wanted ? 'Remove record from wantlist' : 'Add record to wantlist');
-  $('#heart').disabled = !model || model.health !== 'ready' || busy;
+  $('#heart').setAttribute('aria-label',target?.isGuest ? wanted ? 'Remove track from session' : 'Save track to session' : wanted ? 'Remove record from wantlist' : 'Add record to wantlist');
+  $('#heart').disabled = !target || target.health !== 'ready' || busy;
   const warning = deadIds.has(song.vid) ? 'Video unavailable · open in YouTube or try another track' : song.conf === 'low' ? 'Probable track match' : song.conf === 'none' ? 'Track unmatched · showing the YouTube title' : '';
   $('#matchWarning').textContent = warning; $('#matchWarning').hidden = !warning;
 }
 $('#heart').onclick = () => like(playing.song);
 async function like(song) {
   if (!song || !model) return;
-  const result = await model.toggle(song);
-  if (result) notify(dryRun && !fixture ? 'Dry run: no Discogs change sent.' : result.adding ? 'Added to wantlist · saved in this session' : 'Removed record from wantlist');
-  else if (model.error) notify(model.error,10000);
+  const target = actionModel(song), result = await target.toggle(song);
+  if (result) notify(target.isGuest ? result.adding ? 'Saved to this session' : 'Removed from this session' : dryRun && !fixture ? 'Dry run: no Discogs change sent.' : result.adding ? 'Added to wantlist · saved in this session' : 'Removed record from wantlist');
+  if (target.error) notify(target.error,10000);
   if (playing.source === 'session') {
-    playing.list = model.session.items.slice(); playing.index = playing.list.findIndex(s=>trackKey(s)===trackKey(playing.song));
+    playing.list = reviewItems(); playing.index = playing.list.findIndex(s=>trackKey(s)===trackKey(playing.song));
   }
+}
+function unsentGuest(song) {
+  return !model?.isGuest && guestSession?.has(song) && guestStatus(guestSession.session.items.find(s=>trackKey(s)===trackKey(song)), model.username) !== 'saved'
+    && !model.session.items.some(s=>trackKey(s)===trackKey(song));
+}
+function actionModel(song) { return model.isGuest || unsentGuest(song) ? guestSession : model; }
+function reviewItems() {
+  if (!model) return [];
+  if (model.isGuest) return model.session.items.slice();
+  return [...new Map([...guestSession.unsaved(model.username),...model.session.items].map(s=>[trackKey(s),s])).values()];
 }
 function syncGeometry() {
   const rect = !currentModal && cards[active]?.el.querySelector('.art').getBoundingClientRect();
@@ -479,15 +522,21 @@ setInterval(updateSeek,250);
 
 function renderSession() {
   if (!model) return;
-  const items = model.session.items, records = new Set(items.map(s=>s.wantedReleaseId)).size;
+  const items = reviewItems(), records = new Set(items.map(s=>s.wantedReleaseId || s.releaseId)).size;
+  const remaining = model.isGuest ? items.length : guestSession.unsaved(model.username).length;
+  $('#sessionConnection').textContent = model.isGuest ? 'Guest session · saved on this device' : 'Connected as @' + model.username;
+  $('#sessionCopy').textContent = model.isGuest ? 'Your finds stay in this browser. Releases may also be saved to Crate’s shared wantlist. Add your own token to save these finds to your Discogs.' : remaining ? 'Your guest finds are kept here until they can be saved to your account.' : 'Saved to your Discogs wantlist. Listen again, or remove a record.';
+  $('#syncGuest').hidden = !remaining;
+  $('#syncGuest').textContent = model.isGuest ? 'Save to my Discogs' : guestSession.syncing ? 'Saving finds…' : 'Save remaining guest finds';
+  $('#syncGuest').disabled = guestSession.syncing || model.health === 'loading';
   $('#sessionButton').setAttribute('aria-label',`Open this session, ${items.length} tracks`);
   $('#sessionSummary').textContent = items.length ? `${items.length} ${items.length===1?'track':'tracks'} · ${records} ${records===1?'record':'records'}` : 'Your next favourite is still out there.';
-  $('#sessionError').textContent = model.error || (model.health === 'loading' ? 'Refreshing your Discogs wantlist…' : model.health === 'unknown' ? 'Wantlist status is unverified. Retry before making changes.' : '');
+  $('#sessionError').textContent = guestSession.error || model.error || (model.health === 'loading' ? 'Refreshing your Discogs wantlist…' : model.health === 'unknown' ? 'Wantlist status is unverified. Retry before making changes.' : '');
   $('#sessionError').hidden = !$('#sessionError').textContent;
-  $('#retryWants').hidden = model.health !== 'unknown'; $('#newSession').disabled = model.pending.size > 0;
+  $('#retryWants').hidden = model.health !== 'unknown'; $('#newSession').disabled = model.pending.size > 0 || guestSession.syncing;
   if (currentModal !== $('#session')) return;
   // Keep focused controls stable while playback events update the row state.
-  const signature = JSON.stringify([items.map(s=>[trackKey(s),model.busy(s),model.has(s)]),model.health,playing.song?.vid,playing.source,ready[current] ? players[current].getPlayerState() : 0]);
+  const signature = JSON.stringify([items.map(s=>[trackKey(s),actionModel(s).busy(s),actionModel(s).has(s),s.sync]),model.health,model.username,guestSession.syncing,playing.song?.vid,playing.source,ready[current] ? players[current].getPlayerState() : 0]);
   if ($('#sessionRows').dataset.signature === signature) return;
   const focused = $('#sessionRows').contains(document.activeElement) ? document.activeElement : null;
   const focusKind = focused?.hasAttribute('data-play') ? 'data-play' : focused?.hasAttribute('data-remove') ? 'data-remove' : null;
@@ -500,20 +549,27 @@ function renderSession() {
     return;
   }
   $('#sessionRows').innerHTML = items.map((song,index) => {
-    const shared = items.filter(s=>s.wantedReleaseId===song.wantedReleaseId).length;
+    const target = actionModel(song), shared = target.isGuest ? 0 : items.filter(s=>s.wantedReleaseId===song.wantedReleaseId).length;
+    const status = target.isGuest && !model.isGuest ? guestStatus(song,model.username) === 'failed' ? 'Not saved · retry available' : 'Waiting to save' : '';
     const isPlaying = playing.source==='session' && playing.song?.vid===song.vid && ready[current] && players[current].getPlayerState()===1;
-    return `<div class="find-row"><button class="find-play ${isPlaying?'playing':''}" data-play="${index}" aria-label="${isPlaying?'Pause':'Replay'} ${esc(song.trackTitle||song.videoTitle)}"><span class="find-art">${https(song.cover) || (fixture && song.cover?.startsWith('tests/')) ? `<img src="${esc(song.cover)}" alt="" loading="lazy">` : ''}<span class="replay-badge">${isPlaying?'Ⅱ':'<img src="assets/icons/play.svg" width="14" height="14" alt="">'}</span></span><span class="find-info"><b>${esc(song.trackTitle||song.videoTitle)}</b><span>${esc(song.artist)}</span><span>${esc(song.releaseTitle)}</span>${shared>1?`<span class="record-note">${shared} tracks share this record · removal affects all of them</span>`:''}</span></button><button class="like on" data-remove="${index}" aria-label="Remove ${esc(song.releaseTitle)} from wantlist" aria-busy="${model.busy(song)}" ${model.busy(song)||model.health!=='ready'?'disabled':''}><img src="assets/icons/heart-filled.svg" width="24" height="24" alt=""></button></div>`;
+    return `<div class="find-row"><button class="find-play ${isPlaying?'playing':''}" data-play="${index}" aria-label="${isPlaying?'Pause':'Replay'} ${esc(song.trackTitle||song.videoTitle)}"><span class="find-art">${https(song.cover) || (fixture && song.cover?.startsWith('tests/')) ? `<img src="${esc(song.cover)}" alt="" loading="lazy">` : ''}<span class="replay-badge">${isPlaying?'Ⅱ':'<img src="assets/icons/play.svg" width="14" height="14" alt="">'}</span></span><span class="find-info"><b>${esc(song.trackTitle||song.videoTitle)}</b><span>${esc(song.artist)}</span><span>${esc(song.releaseTitle)}</span>${status?`<span class="record-note">${status}</span>`:''}${shared>1?`<span class="record-note">${shared} tracks share this record · removal affects all of them</span>`:''}</span></button><button class="like on" data-remove="${index}" aria-label="Remove ${esc(song.releaseTitle)} from ${target.isGuest?'this session':'wantlist'}" aria-busy="${target.busy(song)}" ${target.busy(song)||target.health!=='ready'||guestSession.syncing?'disabled':''}><img src="assets/icons/heart-filled.svg" width="24" height="24" alt=""></button></div>`;
   }).join('');
-  $('#sessionRows').querySelectorAll('[data-play]').forEach(button => { button.onclick = () => { const list=model.session.items.slice(),index=Number(button.dataset.play); replay(list[index],'session',list,index); renderSession(); }; });
-  $('#sessionRows').querySelectorAll('[data-remove]').forEach(button => { button.onclick = () => like(model.session.items[Number(button.dataset.remove)]); });
+  $('#sessionRows').querySelectorAll('[data-play]').forEach(button => { button.onclick = () => { const list=reviewItems(),index=Number(button.dataset.play); replay(list[index],'session',list,index); renderSession(); }; });
+  $('#sessionRows').querySelectorAll('[data-remove]').forEach(button => { button.onclick = () => like(reviewItems()[Number(button.dataset.remove)]); });
   if (focusKind) {
     const target = $(`#sessionRows [${focusKind}="${focusIndex}"]:not(:disabled)`) || $(`#sessionRows [data-play="${focusIndex}"]`) || $('#closeSession');
     target.focus({preventScroll:true});
   }
 }
-$('#sessionButton').onclick = () => { if (!model) return show($('#setup')); show($('#session')); renderSession(); };
+$('#sessionButton').onclick = () => { if (!model) return; show($('#session')); renderSession(); };
 $('#retryWants').onclick = loadWants;
-$('#newSession').onclick = () => { if (!model?.reset()) return; if (playing.source==='session') { playing.list=[]; playing.index=-1; } renderSession(); notify('New session started. Your wantlist is unchanged.'); };
+$('#syncGuest').onclick = async () => {
+  if (model.isGuest) return openSetup();
+  if (guestSession.syncing) return;
+  await loadWants(); if (model.health === 'ready') await guestSession.syncTo(model);
+  renderDock(); renderSession();
+};
+$('#newSession').onclick = () => { if (guestSession.syncing || !model?.reset()) return; if (!model.isGuest) guestSession.reset(); if (playing.source==='session') { playing.list=[]; playing.index=-1; } renderSession(); notify('New session started. Your wantlist is unchanged.'); };
 
 async function openRelease(song) {
   releaseSong = song;
@@ -534,7 +590,7 @@ async function openRelease(song) {
   wireArt($('#releaseContent .art')); show($('#release'));
   renderDock();
   $('#closeRelease').onclick = hide;
-  $('#releaseLike').onclick = async () => { await like(song); if ($('#releaseLike')) $('#releaseLike').textContent = model.has(song)?'Remove from wantlist':'Add to wantlist'; };
+  $('#releaseLike').onclick = async () => { await like(song); renderDock(); };
   $('#releaseContent').querySelectorAll('[data-track]').forEach(button => { button.onclick = () => {
     const s = rows[Number(button.dataset.track)].song; replay(s,'release',list,list.indexOf(s));
     $('#releaseContent').querySelectorAll('[data-track]').forEach(b=>b.classList.toggle('now',b===button));
@@ -559,19 +615,22 @@ document.addEventListener('keydown', event => {
 });
 
 async function boot() {
+  guestSession = new GuestDiscoveries(storage, id=>dryRun ? Promise.resolve({dryRun:true}) : catalogue.addShared(id), ()=>{renderDock();renderSession();});
   if (fixture) {
     fixtureData = await import('./tests/fixture.js'); opts = {...opts,genre:'Electronic',style:'Minimal techno',y1:'2000',y2:'2001'};
     videoAvailability = new VideoAvailability({fetcher:url => fixtureData.probeVideo(url, params)});
-    api = fixtureData.createAPI(params); model = new SessionDiscoveries('local-demo',storage,(...args)=>api.req(...args),()=>{renderDock();renderSession();});
+    api = fixtureData.createAPI(params); accountAPI = api;
+    if (params.has('guest')) { guestSession.mirror = async()=>{}; model = guestSession; }
+    else model = new SessionDiscoveries('local-demo',storage,(...args)=>accountAPI.req(...args),()=>{renderDock();renderSession();});
     await loadWants(); attachPlayers((k,events)=>new fixtureData.FakePlayer(events)); start();
     // Read-only diagnostics and synthetic player events exist only in the localhost fixture.
     window.crateFixture = {model,api,players,get playing(){return playing;},get active(){return active;}};
     return;
   }
-  initYouTube();
+  initYouTube(); api = catalogue; model = guestSession; renderSession();
   const token = localStorage.getItem('dx_token'), username = storage.get('dx_user','');
   if (token && username) { connect(token,username); if (opts.style || opts.genre || opts.label) start(); else openPick(); }
-  else show($('#setup'));
+  else if (storage.get('dx_opts', null)) start(); else openPick();
   if (dryRun) notify('Dry run: wantlist changes are simulated.',10000);
 }
 boot().catch(() => notify('Couldn’t start Crate. Reload to try again.',10000));

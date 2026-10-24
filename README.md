@@ -2,7 +2,7 @@
 
 A little digging. A great discovery.
 
-Swipe through vinyl releases, listen to linked YouTube tracks and save records to your Discogs wantlist. Reopen **This session** to listen to your finds again or remove a record. The session stays on this browser until you start a new one.
+Swipe through vinyl releases, listen to linked YouTube tracks and keep your guest finds without setup. Add your own Discogs token later to save those records to your wantlist. Reopen **This session** to listen to your finds again or remove a record. The session stays on this browser until you start a new one.
 
 <p>
   <img src="docs/screenshots/playback-mobile.png" width="200" alt="Playback screen">
@@ -18,7 +18,7 @@ Use Node.js 24 or newer. No dependencies or build step are needed to serve the a
 node scripts/serve.mjs
 ```
 
-Open [the local app](http://127.0.0.1:4173/). Connect with your own Discogs personal access token. The token stays in localStorage on that browser/origin and is sent only to the Discogs API. Do not commit it to the repository or put it in a URL.
+Open [the local app](http://127.0.0.1:4173/). Guest discovery uses the public throwaway account configured in `config.js`; no signup or backend is required. You can also connect with your own Discogs personal access token. Your personal token stays in localStorage on that browser/origin and is sent only to Discogs. Never commit personal tokens or put them in URLs.
 
 For a deterministic, credential-free local demo, open [the local demo](http://127.0.0.1:4173/?fixture=1). It uses simulated players and Discogs responses; it does not make external requests or play real audio. This mode is disabled on public hosts.
 
@@ -26,7 +26,9 @@ For a deterministic, credential-free local demo, open [the local demo](http://12
 
 - Choose a genre/style, year range, label or country. Only vinyl releases and videos already linked on Discogs are included.
 - Swipe vertically or use ↑/↓. Tap artwork to pause/play; the first tap enables sound. Scrub to seek.
-- Tap the heart or double-tap artwork to add/remove the **record** on your Discogs wantlist immediately.
+- As a guest, hearts save individual finds on this browser. Shared-account copies are best effort; removing a guest find never removes a shared want.
+- Add your own token from **This session** to merge your guest finds into your own wantlist. Failed saves stay available for retry.
+- When connected, hearts add/remove the **record** on your Discogs wantlist immediately.
 - The stacked-records button opens **This session**: tracks you explicitly liked in this session, with replay and removal controls. It is not a checkout and does not show your entire historic wantlist.
 - Discogs saves releases, not individual tracks. Removing a record also removes session tracks linked to that wanted version. Other wanted pressings are retained.
 - Session replay has its own playback position/order. Closing it returns to the discovery track and position you left.
@@ -42,7 +44,8 @@ For a deterministic, credential-free local demo, open [the local demo](http://12
 | `styles.css` | Figma-derived layout, responsive rules and Inter typography |
 | `app.js` | UI, feed, shared players, seek controls and authentication |
 | `core.js` | Original v2.3 discovery, matching, rate-limited API and cache integration |
-| `session.js` | Per-account persistent discoveries and record-level wantlist mutations |
+| `session.js` | Persistent guest/account discoveries and resumable wantlist import |
+| `catalogue-client.js`, `config.js` | Public throwaway account client and shared-token configuration |
 | `assets/` | Local Figma SVG exports and Inter webfont/license |
 | `tests/` | Unit tests, localhost fixture and browser acceptance suite |
 
@@ -83,11 +86,13 @@ The browser suite blocks external requests, uses fake wantlist writes and saves 
 
 ## Publish on GitHub Pages
 
-This is a static site. Push the source files to the existing repository and serve the repository root from the chosen Pages branch. Keep `.nojekyll`. There is no build output to generate, no server to deploy and no production secret to configure.
+This is a static site again, including guest mode. Push the source files to the existing repository and serve its root from the chosen Pages branch. No backend, hosting account, environment secrets or build output are required. Keep `.nojekyll`.
 
-Include `index.html`, the JavaScript/CSS files and `assets/`. Paths are relative, so the app works under `/crate-swipe/` and on a custom domain. Development files can remain in the repository; fixture mode cannot activate on the public Pages hostname. Do not upload `node_modules`, `.browsers`, `artifacts`, `test-results`, `.env` files or credentials.
+Include the JavaScript/CSS files, `index.html` and `assets/`. Relative paths work under `/crate-swipe/`. See [guest deployment notes](docs/guest-deployment.md).
 
-See [implementation notes and test evidence](docs/implementation-notes.md) for the validation scope and remaining live-device checks.
+The throwaway token in `config.js` is intentionally public with the owner's approval. Anyone can extract and use it; it is not a restricted or private credential. Personal tokens entered by visitors remain browser-local and are never copied into this file. Do not upload `.env` files, `node_modules`, `.browsers` or test output.
+
+See [guest verification](docs/guest-verification.md) and [implementation notes](docs/implementation-notes.md) for validation scope and remaining live-device checks.
 
 ## Design and credits
 

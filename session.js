@@ -38,6 +38,25 @@ export class SessionDiscoveries {
   has(song) { return this.target(song) !== null; }
   lock(song) { return song.masterId ? 'm:' + song.masterId : 'r:' + (song.wantedReleaseId || song.releaseId); }
   busy(song) { return this.pending.has(this.lock(song)); }
+  async ensureWanted(song) {
+    if (this.health !== 'ready' || this.busy(song)) return {ok:false};
+    const lock = this.lock(song); this.pending.add(lock); this.changed();
+    // Guest sync metadata must not influence the destination account's pressing selection.
+    const {wantedReleaseId:ignored, sync:ignoredSync, ...source} = song;
+    let id = this.target(source);
+    try {
+      if (id === null) {
+        id = source.releaseId;
+        await this.request('PUT', '/users/' + encodeURIComponent(this.username) + '/wants/' + id, 3);
+        this.wanted.set(id, source.masterId || 0); this.mutations.set(id, ++this.revision);
+      }
+      if (!this.session.items.some(s => trackKey(s) === trackKey(source))) this.session.items.push({...source,wantedReleaseId:id});
+      this.save(); return {ok:true,id};
+    } catch {
+      this.error = 'Some records couldn’t be saved. Your guest finds are kept for retry.';
+      this.changed(); return {ok:false};
+    } finally { this.pending.delete(lock); this.changed(); }
+  }
   async refresh(loader) {
     if (this.health === 'loading') return;
     const revision = this.revision;
@@ -85,5 +104,73 @@ export class SessionDiscoveries {
   reset() {
     if (this.pending.size) return false;
     this.session = this.empty(); this.save(); return true;
+  }
+}
+
+export function guestStatus(song, username) { return song.sync?.['user:' + username]?.state || 'local'; }
+
+// Guest hearts and review are device-local; the shared account is only an optional copy.
+export class GuestDiscoveries {
+  constructor(storage, mirror = async()=>{}, changed = ()=>{}) {
+    Object.assign(this, {storage, mirror, changed}); this.isGuest = true; this.username = '';
+    this.key = 'crate_guest_session_v1'; this.health = 'ready'; this.pending = new Set(); this.error = ''; this.syncing = false;
+    const saved = storage.get(this.key, null);
+    this.session = saved?.version === 1 && typeof saved.id === 'string' && Array.isArray(saved.items) ? saved : this.empty();
+    this.session.items = this.session.items.filter(s=>s && Number.isInteger(s.releaseId) && /^[\w-]{11}$/.test(s.vid));
+    for (const item of this.session.items) {
+      if (!item.sync || typeof item.sync !== 'object' || Array.isArray(item.sync)) item.sync = {};
+      for (const state of Object.values(item.sync)) if (state?.state === 'pending') state.state = 'failed';
+    }
+    this.save();
+  }
+  empty() { return {version:1,id:globalThis.crypto?.randomUUID?.() || Date.now()+'-'+Math.random().toString(36).slice(2),started:Date.now(),items:[]}; }
+  save() {
+    if (this.storage.set(this.key, this.session) === false) this.error = 'This browser couldn’t save your finds. Keep this page open and try again.';
+    this.changed();
+  }
+  has(song) { return this.session.items.some(s=>trackKey(s) === trackKey(song)); }
+  busy() { return this.syncing; }
+  async toggle(song) {
+    if (this.syncing) return false;
+    const adding = !this.has(song); this.error = '';
+    if (adding) this.session.items.push({...song,likedAt:Date.now(),sync:{}});
+    else this.session.items = this.session.items.filter(s=>trackKey(s) !== trackKey(song));
+    this.save();
+    if (adding) Promise.resolve().then(()=>this.mirror(song.releaseId)).catch(()=>{});
+    return {adding,id:song.releaseId};
+  }
+  unsaved(username) { return this.session.items.filter(s=>guestStatus(s, username) !== 'saved'); }
+  syncTo(account) {
+    if (this.job) return this.job;
+    if (account.health !== 'ready') { this.error = 'Refresh your Discogs wantlist before syncing.'; this.changed(); return Promise.resolve(false); }
+    this.syncing = true; this.error = ''; this.changed();
+    this.job = this.syncRecords(account).finally(()=>{ this.syncing = false; this.job = null; this.changed(); });
+    return this.job;
+  }
+  async syncRecords(account) {
+    const username = account.username, key = 'user:' + username, groups = new Map();
+    for (const song of this.unsaved(username)) {
+      const lock = account.lock(song);
+      if (!groups.has(lock)) groups.set(lock, []);
+      groups.get(lock).push(song);
+    }
+    for (const songs of groups.values()) {
+      for (const song of songs) { song.sync ||= {}; song.sync[key] = {state:'pending'}; }
+      this.save();
+      let result = await account.ensureWanted(songs[0]);
+      if (result.ok) for (const song of songs.slice(1)) {
+        const added = await account.ensureWanted(song);
+        if (!added.ok) result = added;
+      }
+      for (const song of songs) song.sync[key] = result.ok ? {state:'saved',wantedReleaseId:result.id} : {state:'failed'};
+      this.save();
+    }
+    const complete = this.unsaved(username).length === 0;
+    if (!complete && !this.error) this.error = 'Some records couldn’t be saved. Retry to save the remaining finds.';
+    this.changed(); return complete;
+  }
+  reset() {
+    if (this.syncing) return false;
+    this.session = this.empty(); this.error = ''; this.save(); return true;
   }
 }
