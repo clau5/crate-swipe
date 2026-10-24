@@ -22,7 +22,7 @@ let releaseSong = null;
 let playing = {source:'feed', song:null, list:[], index:-1};
 const players = [null, null], ready = [false, false], loaded = [null, null];
 const unlocked = [false, false], blocked = [false, false];
-let current = 0, soundOn = false, startTimer, verifyTimer, seekDragging = false;
+let current = 0, soundOn = false, playRequested = false, startTimer, verifyTimer, soundTimer, seekDragging = false;
 const wrap = k => $(k ? '#pB' : '#pA');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const https = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } };
@@ -221,7 +221,11 @@ function addCard(song) {
     if (event.target.closest('button,a')) return;
     const now = Date.now();
     if (now-lastTap < 300) { clearTimeout(tapTimer); lastTap = 0; like(song); return; }
-    lastTap = now; tapTimer = setTimeout(() => { if (active === index) soundOn ? togglePlay() : soundTap(); },300);
+    lastTap = now;
+    if (active !== index) return;
+    // Safari needs play/unmute in the original gesture. Only defer pausing for double-tap likes.
+    if (!soundOn || !ready[current] || players[current].getPlayerState() !== 1) togglePlay();
+    else tapTimer = setTimeout(() => { if (active === index) pausePlayback(); },300);
   });
   $('#feed').append(el); cards.push({el,song}); observer.observe(el);
 }
@@ -253,7 +257,7 @@ function play(song, source = 'feed', list = [], index = -1, time = null, paused 
   if (!song) return;
   playing = {source,song,list,index}; setBackdrop(song); renderDock();
   requestAnimationFrame(syncGeometry);
-  clearTimeout(startTimer); clearTimeout(verifyTimer); $('#paused').style.display = 'none';
+  clearPlaybackTimers(); playRequested = !paused; $('#paused').style.display = 'none';
   for (let k=0;k<2;k++) wrap(k).classList.remove('unlock');
   $('#hint').hidden = true;
   if (!ready[current]) return;
@@ -264,7 +268,7 @@ function play(song, source = 'feed', list = [], index = -1, time = null, paused 
     if (soundOn) { players[current].unMute(); players[current].setVolume(100); } else players[current].mute();
     players[current].playVideo();
     if (soundOn && !unlocked[current] && unlocked[previous]) verifyTimer = setTimeout(() => {
-      if (playing.song?.vid !== song.vid) return;
+      if (!playRequested || playing.song?.vid !== song.vid) return;
       if (players[current].getPlayerState() !== 1 || players[current].isMuted()) {
         blocked[current] = true; players[current].pauseVideo(); players[current].mute(); loaded[current] = null; current = previous;
         players[current].unMute(); players[current].loadVideoById({videoId:song.vid,startSeconds:offset}); loaded[current] = song.vid;
@@ -320,8 +324,11 @@ function onError(k, event) {
   else preload();
 }
 function needTap() {
-  if (!ready[current]) return;
+  if (!ready[current] || !playRequested) return;
   if (currentModal && !['session','release'].includes(currentModal.id)) { soundOn = false; return; }
+  // An unlocked player never needs the intrusive first-time permission fallback again.
+  if (!soundOn || unlocked[current]) { soundOn = false; updateSound(); return; }
+  syncGeometry();
   players[current].pauseVideo(); players[current].unMute(); wrap(current).classList.add('unlock');
   // Keep the iframe in place: reparenting it can reload the player and lose Safari sound permission.
   $('#hint').hidden = false; $('#sound').hidden = true;
@@ -329,21 +336,31 @@ function needTap() {
 function updateSound() { $('#sound').hidden = (currentModal && !['session','release'].includes(currentModal.id)) || !playing.song || soundOn || !ready[current] || wrap(current).classList.contains('unlock'); }
 function soundTap() {
   if (!ready[current]) return;
-  const k = current; soundOn = true; players[k].unMute(); players[k].setVolume(100); players[k].playVideo();
-  setTimeout(() => {
-    if (k !== current) return;
+  clearTimeout(soundTimer);
+  const k = current; playRequested = true; soundOn = true; players[k].unMute(); players[k].setVolume(100); players[k].playVideo();
+  soundTimer = setTimeout(() => {
+    if (k !== current || !playRequested) return;
     if (players[k].getPlayerState() === 1 && !players[k].isMuted()) unlocked[k] = true;
-    else { soundOn = false; needTap(); }
+    else if (players[k].getPlayerState() !== 3) needTap();
     updateSound();
   },1000); updateSound();
 }
+function clearPlaybackTimers() {
+  clearTimeout(startTimer); clearTimeout(verifyTimer); clearTimeout(soundTimer);
+}
+function pausePlayback() {
+  playRequested = false; clearPlaybackTimers();
+  wrap(current).classList.remove('unlock'); $('#hint').hidden = true;
+  players[current].pauseVideo(); updateSound();
+}
 function togglePlay() {
   if (!ready[current]) return;
+  if (soundOn && playRequested && players[current].getPlayerState() === 1) return pausePlayback();
   if (!soundOn) return soundTap();
-  if (players[current].getPlayerState() === 1) players[current].pauseVideo(); else players[current].playVideo();
+  playRequested = true; players[current].playVideo();
 }
 function stopPlayers() {
-  clearTimeout(startTimer); clearTimeout(verifyTimer);
+  playRequested = false; clearPlaybackTimers();
   for (let k=0;k<2;k++) { wrap(k).classList.remove('unlock'); if (ready[k]) players[k].stopVideo(); loaded[k] = null; }
   $('#sound').hidden = true; $('#hint').hidden = true; $('#paused').style.display = 'none';
 }
@@ -402,6 +419,10 @@ new ResizeObserver(() => {
   requestAnimationFrame(syncGeometry);
 }).observe($('#dock'));
 window.addEventListener('resize',()=>requestAnimationFrame(syncGeometry));
+let geometryFrame;
+$('#feed').addEventListener('scroll',()=>{
+  cancelAnimationFrame(geometryFrame); geometryFrame = requestAnimationFrame(syncGeometry);
+},{passive:true});
 function updateSeek() {
   if (!playing.song || !ready[current] || seekDragging) return;
   const total = players[current].getDuration() || playing.song.duration || 0, time = players[current].getCurrentTime() || 0;
