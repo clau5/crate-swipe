@@ -7,9 +7,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000">
 <title>Crate Swipe</title>
-<meta name="app-version" content="crate-swipe 2.1.0 (2026-10-24)">
+<meta name="app-version" content="crate-swipe 2.2.0 (2026-10-24)">
 <style>
-:root{--bg:#000;--fg:#fff;--mut:#aaa;--acc:#ff2d55;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
+:root{--S:min(84vw,46vh,520px);--cy:45%;--PS:calc(min(34vh,56.25vw) - 94px);--pcy:calc(var(--safe-t) + 52px + var(--PS)/2);--bg:#000;--fg:#fff;--mut:#aaa;--acc:#ff2d55;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.35 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;overflow:hidden}
 button,input,select{font:inherit}
@@ -19,10 +19,12 @@ a{color:#9cf}
 .card{position:relative;height:100vh;height:100dvh;scroll-snap-align:start;scroll-snap-stop:always;overflow:hidden;user-select:none;-webkit-user-select:none}
 #backdrop{position:fixed;inset:-40px;z-index:0;background:#000 center/cover no-repeat;filter:blur(30px) brightness(.45);transform:scale(1.1);transition:background-image .2s}
 .card .bg{display:none}
-.card .slot{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;background:#000 center/cover no-repeat}
-body.vidon .card.act .slot{visibility:hidden} /* the real player (below the feed) shows through */
-.card .top{position:absolute;left:14px;right:14px;top:calc(var(--safe-t) + 62px);display:flex;gap:12px;align-items:center}
-.card .top img{width:64px;height:64px;border-radius:6px;object-fit:cover;background:#222;flex:none}
+/* the release's own cover art is the main visual */
+.card .art{position:absolute;left:50%;top:var(--cy);width:var(--S);height:var(--S);transform:translate(-50%,-50%);border-radius:6px;overflow:hidden;background:#1c1c1c;box-shadow:0 12px 40px #000a}
+.art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1}
+.ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:20px;text-align:center;background:linear-gradient(135deg,#2a2a2a,#151515);color:#ddd}
+.ph b{font-size:20px;color:#fff}.ph span{font-size:15px}.ph i{font-size:44px;font-style:normal;opacity:.5}
+.card .top{position:absolute;left:14px;right:14px;top:calc(var(--safe-t) + 58px);display:flex;gap:12px;align-items:center}
 .card .rel{font-size:13px;color:#ddd;min-width:0}
 .card .rel b{display:block;color:#fff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card .info{position:absolute;left:14px;right:84px;bottom:calc(var(--safe-b) + 22px)}
@@ -31,39 +33,45 @@ body.vidon .card.act .slot{visibility:hidden} /* the real player (below the feed
 .card .meta{font-size:13px;color:var(--mut)}
 .card .pos{display:inline-block;background:#fff2;border-radius:4px;padding:0 5px;margin-right:6px;font-size:12px;color:#fff}
 .card .warn{color:#fc6}
-.side{position:absolute;right:10px;bottom:calc(var(--safe-b) + 20px);display:flex;flex-direction:column;gap:16px;align-items:center}
-.side button,.side a{width:56px;height:56px;border-radius:50%;border:0;background:#fff2;color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;text-decoration:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.side small{display:block;font-size:10px;margin-top:-12px;color:#ddd;text-align:center}
+.side{position:absolute;right:10px;bottom:calc(var(--safe-b) + 18px);display:flex;flex-direction:column;gap:12px;align-items:center}
+.side button,.side a{width:50px;height:50px;border-radius:50%;border:0;background:#fff2;color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;text-decoration:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.side small{display:block;font-size:10px;margin-top:-9px;color:#ddd;text-align:center}
 .like.on{background:var(--acc)}
-.heartpop{position:absolute;left:50%;top:50%;font-size:110px;transform:translate(-50%,-50%) scale(.3);opacity:0;pointer-events:none;transition:all .35s;z-index:5}
+.heartpop{position:absolute;left:50%;top:var(--cy);font-size:110px;transform:translate(-50%,-50%) scale(.3);opacity:0;pointer-events:none;transition:all .35s;z-index:5}
 .heartpop.go{opacity:1;transform:translate(-50%,-50%) scale(1)}
 #err{color:#ff8080;font-size:14px;margin-top:10px}
 .stats{font-size:12px;color:#bbb;background:#111;border-radius:8px;padding:10px;margin-top:14px;white-space:pre-wrap}
-#pA,#pB{position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);aspect-ratio:16/9;max-height:60vh;margin:0 auto;z-index:1;pointer-events:none;transition:opacity .15s;opacity:0;overflow:hidden;background:#000}
-#pA.show,#pB.show{opacity:1}
-#pA.unlock,#pB.unlock{pointer-events:auto;outline:3px solid var(--acc);z-index:8}
+/* Audio comes from real YouTube players. They stay at a real size (240x240) in the middle of the viewport, fully opaque, but sit
+   underneath the opaque blurred-art backdrop (z-index -1 < 0), so only the artwork is seen. No display:none / visibility:hidden /
+   zero size / offscreen, which iOS Safari or YouTube may treat as "not visible" and refuse to play. */
+#pA,#pB{position:fixed;left:50%;top:var(--cy);width:240px;height:240px;transform:translate(-50%,-50%);z-index:-1;pointer-events:none;overflow:hidden;background:#000}
+/* one-time iOS sound unlock: the paused, unmuted player is shown over the artwork for a single tap */
+#pA.unlock,#pB.unlock{pointer-events:auto;outline:3px solid var(--acc);z-index:12;width:var(--S);height:var(--S);border-radius:6px}
 /* iframe is taller than its box: YouTube's title/share/watch-later strip (top) and logo/"more videos" strip (bottom) are cropped off */
 #pA iframe,#pB iframe{position:absolute;left:0;top:-64px;width:100%;height:calc(100% + 128px);border:0}
 .shield{position:absolute;inset:0;z-index:2} /* transparent: taps never reach YouTube's own overlays */
 .unlock .shield{display:none}
-#paused{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;font-size:64px;color:#fffd;text-shadow:0 2px 12px #000;pointer-events:none;display:none}
-body.panel #paused{top:calc(var(--safe-t) + 4px + min(17vh,28vw))}
-#scrub{position:fixed;left:8px;right:8px;top:calc(50% + min(28.125vw,30vh) - 12px);height:44px;z-index:7;display:none;align-items:center;gap:8px;padding:0 6px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}
+#paused{position:fixed;left:50%;top:var(--cy);transform:translate(-50%,-50%);z-index:5;font-size:64px;color:#fffd;text-shadow:0 2px 12px #000;pointer-events:none;display:none}
+body.panel #paused{top:var(--pcy);z-index:9}
+#scrub{position:fixed;left:50%;width:calc(var(--S) + 24px);max-width:calc(100vw - 16px);transform:translateX(-50%);top:calc(var(--cy) + var(--S)/2 + 2px);height:44px;z-index:7;display:none;align-items:center;gap:8px;padding:0 6px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}
 #scrub.on{display:flex}
 #scrub .tm{font-size:11px;color:#eee;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #000;min-width:34px;text-align:center;pointer-events:none}
 #scrub .trk{position:relative;flex:1;height:4px;border-radius:2px;background:#ffffff40;pointer-events:none;transition:height .1s}
 #scrub .fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:2px;background:var(--acc)}
 #scrub .knob{position:absolute;top:50%;left:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #0008}
 #scrub.drag .trk{height:8px}#scrub.drag .knob{width:22px;height:22px;margin:-11px 0 0 -11px}
-body.panel #scrub{top:calc(var(--safe-t) + 4px + min(34vh,56.25vw) - 38px);z-index:11}
-body.panel #pA,body.panel #pB{top:calc(var(--safe-t) + 4px);transform:none;max-height:34vh;z-index:5} /* above the feed, below the top bar */
+body.panel #scrub{top:calc(var(--safe-t) + 4px + min(34vh,56.25vw) - 40px);width:calc(100vw - 16px);z-index:11}
+#nowArt{position:fixed;left:50%;top:var(--pcy);width:var(--PS);height:var(--PS);transform:translate(-50%,-50%);z-index:8;display:none;border-radius:6px;overflow:hidden;background:#1c1c1c;box-shadow:0 8px 30px #000a}
+body.panel #nowArt{display:block}
+body.panel #feed{opacity:0} /* only the panel artwork shows above the panel */
+#panel .hd img{display:none}
 #bar{position:fixed;top:0;left:0;right:0;z-index:6;padding:calc(var(--safe-t) + 8px) 10px 8px;display:flex;gap:8px;align-items:center;background:linear-gradient(#000c,#0000)}
 #chip{flex:1;min-width:0;border:0;border-radius:18px;background:#fff2;color:#fff;padding:8px 12px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #status{font-size:11px;color:#ccc;max-width:45%;text-align:right}
 .pill{border:0;border-radius:18px;background:#fff2;color:#fff;padding:8px 12px}
-#sound{position:fixed;left:50%;bottom:calc(var(--safe-b) + 120px);transform:translateX(-50%);z-index:7;border:0;border-radius:24px;padding:12px 18px;background:var(--acc);color:#fff;font-weight:700;box-shadow:0 4px 20px #0008;display:none}
-body.panel #sound{bottom:auto;top:calc(var(--safe-t) + 4px + min(17vh,28vw));transform:translate(-50%,-50%);z-index:11}
-#hint{position:fixed;left:12px;right:12px;top:calc(50% + 32vw);z-index:7;text-align:center;font-weight:700;display:none;text-shadow:0 1px 4px #000}
+#sound{position:fixed;left:50%;top:calc(var(--cy) + var(--S)/2 - 34px);transform:translate(-50%,-50%);z-index:7;border:0;border-radius:24px;padding:12px 18px;background:var(--acc);color:#fff;font-weight:700;box-shadow:0 4px 20px #0008;display:none}
+body.panel #sound{bottom:auto;top:var(--pcy);transform:translate(-50%,-50%);z-index:11}
+#hint{position:fixed;left:12px;right:12px;top:calc(var(--cy) + var(--S)/2 + 10px);z-index:7;text-align:center;font-weight:700;display:none;text-shadow:0 1px 4px #000}
 .sheet{position:fixed;inset:0;z-index:10;background:#000d;display:none;overflow:auto;padding:calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 24px)}
 .sheet.open{display:block}
 .sheet h2{margin:0 0 12px}
@@ -96,10 +104,11 @@ body.panel #panel{display:block}
 <div id="backdrop"></div>
 <div id="pA"><div id="yt0"></div><div class="shield"></div></div><div id="pB"><div id="yt1"></div><div class="shield"></div></div>
 <div id="paused">❚❚</div>
+<div id="nowArt" class="art"></div>
 <div id="scrub" aria-label="Seek"><span class="tm" id="tEl">0:00</span><div class="trk"><div class="fill"></div><div class="knob"></div></div><span class="tm" id="tDur">0:00</span></div>
 <div id="bar"><button id="chip">Pick genre &amp; year…</button><div id="status"></div></div>
 <button id="sound">🔊 Tap to turn sound on</button>
-<div id="hint">Tap the video once to start it with sound</div>
+<div id="hint">One-time step: tap the video once to allow sound on this device</div>
 
 <div id="panel"></div>
 
@@ -130,7 +139,7 @@ body.panel #panel{display:block}
   <div class="row" style="margin-top:14px"><button class="pill" id="resetSeen">Reset seen songs</button><button class="pill" id="changeTok">Change token</button><button class="pill" id="closePick">Close</button></div>
   <p class="small">Only YouTube videos already linked on Discogs releases are used (no YouTube search). Vinyl only. Swipe up/down (or ↑/↓ keys). Double-tap or ♥ adds the release to your Discogs wantlist; do it again to remove it. Keys: Space pause · L like · E explore · M mute.</p>
   <p class="small" id="seenCount"></p>
-  <p class="small">Version 2.1.0</p>
+  <p class="small">Version 2.2.0</p>
   <div class="stats" id="stats"></div>
   <button class="pill" id="resetStats" style="margin-top:8px">Reset stats</button>
 </div>
@@ -220,7 +229,10 @@ function releaseToSongs(rel,hit,state){
   const vids=(rel.videos||[]);st.videos=(st.videos||0)+vids.length;
   const relArtist=artistString(rel.artists)||(hit&&hit.title||'').split(' - ')[0];
   const label=(rel.labels&&rel.labels[0])?cleanArtist(rel.labels[0].name)+(rel.labels[0].catno&&rel.labels[0].catno!=='none'?' · '+rel.labels[0].catno:''):((hit&&hit.label&&hit.label[0])||'');
-  const cover=(hit&&hit.cover_image&&!/spacer\.gif/.test(hit.cover_image))?hit.cover_image:((rel.images&&rel.images[0]&&rel.images[0].uri)||'');
+  // cover art: the release's primary image (full-size uri) first, then the search result's cover_image
+  const im=rel.images||[];const prim=(im.find(i=>i.type==='primary')||im[0]||{}).uri||'';
+  const sc=(hit&&hit.cover_image&&!/spacer\.gif/.test(hit.cover_image))?hit.cover_image:'';
+  const cover=prim||sc,cover2=prim&&sc&&sc!==prim?sc:'';
   for(const v of vids){
     const id=ytId(v.uri);
     if(!id){inc('notYoutube');continue;}
@@ -238,14 +250,14 @@ function releaseToSongs(rel,hit,state){
     if(state.skipVid&&state.skipVid.has(id)){inc('skipKnown');continue;}
     inc('songs');inc('conf_'+m.conf);
     songs.push({vid:id,videoTitle:v.title||'',duration:v.duration||0,trackTitle:m.track?m.track.title.trim():null,position:m.track?m.track.position:null,conf:m.conf,score:m.score,
-      artist,releaseId:rel.id,masterId:rel.master_id||0,releaseTitle:rel.title,label,year:rel.year||(hit&&hit.year)||'',country:rel.country||'',cover,thumb:(hit&&hit.thumb)||cover,url:rel.uri||('https://www.discogs.com/release/'+rel.id)});
+      artist,releaseId:rel.id,masterId:rel.master_id||0,releaseTitle:rel.title,label,year:rel.year||(hit&&hit.year)||'',country:rel.country||'',cover,cover2,thumb:(hit&&hit.thumb)||cover,url:rel.uri||('https://www.discogs.com/release/'+rel.id)});
   }
   return songs;
 }
 function slimRelease(r){ // what we keep in the cache
   return {id:r.id,title:r.title,artists:(r.artists||[]).map(a=>({name:a.name,anv:a.anv,join:a.join})),labels:(r.labels||[]).map(l=>({name:l.name,catno:l.catno})),
     year:r.year,country:r.country,master_id:r.master_id,uri:r.uri,styles:r.styles,genres:r.genres,formats:(r.formats||[]).map(f=>({name:f.name,descriptions:f.descriptions})),
-    images:(r.images||[]).slice(0,1).map(i=>({uri:i.uri})),extraartists:(r.extraartists||[]).map(a=>({name:a.name})),
+    images:(()=>{const im=r.images||[];const p=im.find(i=>i.type==='primary')||im[0];return p?[{uri:p.uri,type:p.type}]:[];})(),extraartists:(r.extraartists||[]).map(a=>({name:a.name})),
     tracklist:(r.tracklist||[]).map(t=>({position:t.position,title:t.title,duration:t.duration,type_:t.type_,artists:t.artists&&t.artists.map(a=>({name:a.name,anv:a.anv,join:a.join})),sub_tracks:t.sub_tracks&&t.sub_tracks.map(x=>({position:x.position,title:x.title,duration:x.duration,type_:x.type_}))})),
     videos:(r.videos||[]).map(v=>({uri:v.uri,title:v.title,duration:v.duration,embed:v.embed}))};
 }
@@ -469,25 +481,31 @@ function fill(){
   else preloadNext();
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+// cover art element: primary image, then the search cover, then a neutral placeholder with artist/title
+function artHtml(song){const src=song.cover||song.cover2;
+  return `<div class="ph"><i>◉</i><b>${esc(song.artist)}</b><span>${esc(song.releaseTitle)}</span></div>${src?`<img src="${esc(src)}" data-alt="${esc(song.cover2||'')}" alt="" decoding="async">`:''}`;}
+function wireArt(root){const img=root.querySelector('img');if(img)img.onerror=()=>{const a=img.dataset.alt;if(a&&img.src!==a){img.src=a;img.dataset.alt='';}else img.remove();};}
 function addCard(song){
   const el=document.createElement('section');el.className='card';const idx=cards.length;
-  const yt='https://img.youtube.com/vi/'+song.vid+'/hqdefault.jpg';
   const trackHtml=song.trackTitle?`<span class="pos">${esc(song.position||'')}</span>`+esc(song.trackTitle):esc(song.videoTitle);
   const metaHtml=song.conf==='high'?'▶ '+esc(song.videoTitle):song.conf==='low'?'<span class="warn">Probable match</span> · ▶ '+esc(song.videoTitle):'<span class="warn">Couldn\'t match this video to a track, showing its YouTube title</span>';
-  el.innerHTML=`<div class="bg" style="background-image:url('${esc(song.cover||yt)}')"></div>
-  <div class="slot" style="background-image:url('${yt}')"></div>
-  <div class="top"><img src="${esc(song.thumb||song.cover)}" alt="" loading="lazy"><div class="rel"><b>${esc(song.releaseTitle)}</b>${esc(song.label)}${song.year?' · '+esc(song.year):''}${song.country?' · '+esc(song.country):''}</div></div>
+  el.innerHTML=`<div class="art">${artHtml(song)}</div>
+  <div class="top"><div class="rel"><b>${esc(song.releaseTitle)}</b>${esc(song.label)}${song.year?' · '+esc(song.year):''}${song.country?' · '+esc(song.country):''}</div></div>
   <div class="info"><div class="artist">${esc(song.artist)}</div><div class="track">${trackHtml}</div><div class="meta">${metaHtml}</div></div>
   <div class="side"><button class="like" title="Add/remove release on wantlist">♥</button><small>Want</small>
   <button class="exp" title="Explore release">💿</button><small>Release</small>
   <a class="ytl" href="https://www.youtube.com/watch?v=${song.vid}" target="_blank" rel="noopener" title="Open in YouTube">▶︎</a><small>YouTube</small></div>
   <div class="heartpop">♥</div>`;
+  wireArt(el.querySelector('.art'));
   el.querySelector('.like').classList.toggle('on',isLiked(song));
   el.querySelector('.like').onclick=e=>{e.stopPropagation();toggleLike(idx,false);};
   el.querySelector('.exp').onclick=e=>{e.stopPropagation();openPanel(idx);};
   let lastTap=0,tapT=null;
   el.addEventListener('click',e=>{if(e.target.closest('.side,.top a'))return;const now=Date.now();
-    if(now-lastTap<300){clearTimeout(tapT);lastTap=0;toggleLike(idx,true);}else{lastTap=now;tapT=setTimeout(()=>{if(idx===active)togglePlay();},300);}});
+    if(now-lastTap<300){clearTimeout(tapT);lastTap=0;toggleLike(idx,true);return;}
+    lastTap=now;
+    if(idx===active&&!soundOn&&ready[cur]){soundTap();return;} // first tap turns sound on, right inside the user gesture
+    tapT=setTimeout(()=>{if(idx===active)togglePlay();},300);});
   $('#feed').appendChild(el);cards.push({el,song});io.observe(el);
 }
 const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.intersectionRatio>0.7){const i=cards.findIndex(c=>c.el===e.target);if(i>=0&&i!==active){dir=i>active?1:-1;setActive(i);}}});},{root:$('#feed'),threshold:[0.7]});
@@ -497,7 +515,7 @@ $('#feed').addEventListener('scroll',()=>{showVid(false);clearTimeout(scrollT);s
 function setActive(i){
   if(cards[active])cards[active].el.classList.remove('act');
   active=i;const s=cards[i].song;closePanel();cards[i].el.classList.add('act');
-  $('#backdrop').style.backgroundImage="url('"+(s.cover||'https://img.youtube.com/vi/'+s.vid+'/hqdefault.jpg').replace(/'/g,'%27')+"')";
+  const bgSrc=s.cover||s.cover2;$('#backdrop').style.backgroundImage=bgSrc?"url('"+bgSrc.replace(/'/g,'%27')+"')":'none';
   if(s.dead){go(dir);return;} // known dead (e.g. failed while preloading): skip straight on
   if(!seen.has(s.vid)){seen.add(s.vid);if(seen.size%5===0||seen.size<5)LS.set('dx_seen',[...seen].slice(-20000));}
   playSong(s);fill();
@@ -506,7 +524,9 @@ function go(d){dir=d>0?1:-1;let i=active+d;while(cards[i]&&cards[i].song.dead&&i
 
 // ---------- Two YouTube players: the visible one plays, the other has the next song cued ----------
 // Never more than 2 iframes. Both are real www.youtube.com embeds (not youtube-nocookie) so a signed-in Premium session can apply.
-const P=[null,null],ready=[false,false],loaded=[null,null];let cur=0,startTimer=null;
+const P=[null,null],ready=[false,false],loaded=[null,null];let cur=0,startTimer=null,verifyT=null;
+// iOS allows sound per player (iframe) only after a user gesture inside it; track which players have played unmuted
+const unlocked=[false,false],blocked=[false,false];
 const wrap=k=>$(k?'#pB':'#pA');
 window.onYouTubeIframeAPIReady=()=>{
   // No native YouTube chrome: no controls bar, captions, annotations, fullscreen or keyboard; our own scrub bar replaces the controls.
@@ -519,10 +539,15 @@ function startFor(s){const o=parseInt(opts.startAt)||0;return (s.duration&&o>s.d
 function playSong(s){
   if(!ready[cur])return;$('#paused').style.display='none';
   const sb=1-cur;
-  if(ready[sb]&&loaded[sb]===s.vid){ // swap to the preloaded player: instant start
-    P[cur].pauseVideo();wrap(cur).classList.remove('show','unlock');cur=sb;document.body.classList.remove('vidon');
+  clearTimeout(verifyT);
+  if(ready[sb]&&loaded[sb]===s.vid&&!(soundOn&&blocked[sb])){ // swap to the preloaded player: instant start
+    P[cur].pauseVideo();wrap(cur).classList.remove('show','unlock');const prev=cur;cur=sb;document.body.classList.remove('vidon');
     if(soundOn){P[cur].unMute();P[cur].setVolume(100);}else P[cur].mute();
     P[cur].playVideo();
+    // if this player was never allowed sound (iOS), fall back to the player that was, instead of asking for another tap
+    if(soundOn&&!unlocked[cur]&&unlocked[prev])verifyT=setTimeout(()=>{const k=cur;let ok=false;try{ok=P[k].getPlayerState()===1&&!P[k].isMuted();}catch(_){}
+      if(!ok&&cards[active]&&cards[active].song.vid===s.vid){blocked[k]=true;P[k].pauseVideo();P[k].mute();loaded[k]=null;cur=prev;
+        P[cur].unMute();P[cur].loadVideoById({videoId:s.vid,startSeconds:startFor(s)});loaded[cur]=s.vid;}},1500);
   }else{
     if(soundOn){P[cur].unMute();P[cur].setVolume(100);}else P[cur].mute();
     P[cur].loadVideoById({videoId:s.vid,startSeconds:startFor(s)});loaded[cur]=s.vid;
@@ -532,7 +557,7 @@ function playSong(s){
   updateSoundBtn();preloadNext();
 }
 function preloadNext(){
-  const sb=1-cur;if(!ready[sb]||active<0)return;
+  const sb=1-cur;if(!ready[sb]||active<0||(soundOn&&blocked[sb]))return;
   let i=active+1;while(cards[i]&&cards[i].song.dead)i++;
   const n=cards[i];if(!n||loaded[sb]===n.song.vid)return;
   P[sb].mute();P[sb].cueVideoById({videoId:n.song.vid,startSeconds:startFor(n.song)});loaded[sb]=n.song.vid;
@@ -543,7 +568,7 @@ function onState(k,e){
   if(e.data===1){showVid(true);clearTimeout(startTimer);$('#hint').style.display='none';
     try{P[k].unloadModule('captions');P[k].unloadModule('cc');}catch(_){}
     if(soundOn&&P[k].isMuted())P[k].unMute();
-    if(!P[k].isMuted()){soundOn=true;wrap(k).classList.remove('unlock');}
+    if(!P[k].isMuted()){soundOn=true;unlocked[k]=true;blocked[k]=false;wrap(k).classList.remove('unlock');$('#hint').style.display='none';}
     if(!cards[active].counted){cards[active].counted=true;stats.played++;saveStats();}
     updateSoundBtn();}
   if(e.data===0&&opts.autoNext!==false)go(1);
@@ -556,13 +581,17 @@ function onErr(k,e){ // 2 bad id · 5 HTML5 error · 100 removed/private · 101/
   if(k===cur&&c&&cards[active]===c)go(dir); // the visible one died: skip immediately
   else if(k!==cur)preloadNext();
 }
-function needTap(){wrap(cur).classList.add('show','unlock');document.body.classList.add('vidon');$('#hint').style.display='block';}
-function updateSoundBtn(){$('#sound').style.display=(ready[cur]&&!soundOn&&active>=0)?'block':'none';}
-$('#sound').onclick=()=>{
-  if(!ready[cur])return;soundOn=true;P[cur].unMute();P[cur].setVolume(100);P[cur].playVideo();
-  setTimeout(()=>{if(P[cur].isMuted()||P[cur].getPlayerState()!==1){soundOn=false;needTap();}updateSoundBtn();},900);
+// Fallback when iOS refuses sound started from our own button/tap: show the paused, unmuted player over the artwork for ONE tap.
+// That tap lands inside YouTube's iframe, which is what iOS needs; the player then hides again as soon as it plays with sound.
+function needTap(){try{P[cur].pauseVideo();P[cur].unMute();}catch(_){}wrap(cur).classList.add('show','unlock');$('#hint').style.display='block';$('#sound').style.display='none';}
+function updateSoundBtn(){$('#sound').style.display=(ready[cur]&&!soundOn&&active>=0&&!wrap(cur).classList.contains('unlock'))?'block':'none';}
+// First gesture: unmute + play straight from our tap handler (works on desktop; on iOS it depends on the version).
+function soundTap(){
+  if(!ready[cur])return;soundOn=true;const k=cur;P[k].unMute();P[k].setVolume(100);P[k].playVideo();$('#paused').style.display='none';
+  setTimeout(()=>{let ok=false;try{ok=!P[k].isMuted()&&P[k].getPlayerState()===1;}catch(_){}if(ok)unlocked[k]=true;else if(k===cur){soundOn=false;needTap();}updateSoundBtn();},1000);
   updateSoundBtn();
-};
+}
+$('#sound').onclick=e=>{e.stopPropagation();soundTap();};
 function togglePlay(){if(!ready[cur])return;const st=P[cur].getPlayerState();if(st===1)P[cur].pauseVideo();else{if(soundOn)P[cur].unMute();P[cur].playVideo();}}
 function stopPlayers(){document.body.classList.remove('vidon');$('#paused').style.display='none';[0,1].forEach(k=>{wrap(k).classList.remove('show','unlock');if(ready[k])P[k].stopVideo();loaded[k]=null;});}
 
@@ -623,8 +652,10 @@ async function openPanel(i){
   p.querySelector('.pl').onclick=async()=>{await setLike(s,!isLiked(s));p.querySelector('.pl').textContent=isLiked(s)?'♥ On wantlist (tap to remove)':'♡ Add to wantlist';};
   p.querySelectorAll('li.has').forEach(li=>li.onclick=()=>{p.querySelectorAll('li.now').forEach(n=>n.classList.remove('now'));li.classList.add('now');playSong({vid:li.dataset.v,duration:0});});
   p.querySelectorAll('li').forEach(li=>{if(li.dataset.v===s.vid)li.classList.add('now');});
+  $('#nowArt').innerHTML=artHtml(s);wireArt($('#nowArt'));
   document.body.classList.add('panel');
 }
+$('#nowArt').addEventListener('click',()=>{if(!soundOn&&ready[cur])soundTap();else togglePlay();});
 function closePanel(){document.body.classList.remove('panel');}
 
 document.addEventListener('keydown',e=>{
