@@ -1,5 +1,6 @@
 import {GENRES, STYLES, Explorer, Discogs, primaryPick, chooseNext, adaptiveGap, poolVariety, flattenTracks, matchTrack, ytId, artistString, releaseToSongs} from './core.js';
 import {SessionDiscoveries, trackKey} from './session.js';
+import {VideoAvailability} from './video-availability.js';
 
 const $ = selector => document.querySelector(selector);
 const storage = {
@@ -16,6 +17,8 @@ let seen = new Set(storage.get('dx_seen', []));
 let stats = storage.get('dx_stats', {played:0, dead:0, codes:{}, deadIds:[]});
 let deadIds = new Set(stats.deadIds || []);
 let api, model, explorer, fixtureData;
+let videoAvailability = new VideoAvailability({storage});
+let feedGeneration = 0, recoveringAt = null, discoveryError = false, lastDiscoveryNotice = 0;
 let pool = [], reserve = [], cards = [], active = -1, gap = 15, buffer = 30;
 let currentModal = null, returnPlayback = null, noticeTimer, opener;
 let releaseSong = null;
@@ -87,7 +90,10 @@ function hide() {
   for (const el of [$('#feed'),$('#bar'),$('#empty')]) el.inert = false;
   if (returnPlayback) {
     const saved = returnPlayback; returnPlayback = null;
-    play(saved.song, saved.source, saved.list, saved.index, saved.time, saved.paused);
+    if (saved.source === 'feed' && deadIds.has(saved.song.vid)) {
+      playing = saved; discardUnavailable(saved.song.vid);
+      if (saved.paused && playing.song) pausePlayback();
+    } else play(saved.song, saved.source, saved.list, saved.index, saved.time, saved.paused);
   }
   renderDock();
   updateSound();
@@ -114,7 +120,7 @@ async function openPick() {
 $('#chip').onclick = openPick;
 $('#emptyAction').onclick = () => model ? openPick() : show($('#setup'));
 $('#resetSeen').onclick = () => { seen.clear(); storage.set('dx_seen', []); $('#seenCount').textContent = 'Seen songs cleared.'; };
-$('#resetStats').onclick = () => { stats = {played:0,dead:0,codes:{},deadIds:[]}; deadIds.clear(); saveStats(); openPick(); };
+$('#resetStats').onclick = () => { stats = {played:0,dead:0,codes:{},deadIds:[]}; deadIds.clear(); videoAvailability.clear(); saveStats(); openPick(); };
 $('#changeTok').onclick = () => { if (model?.pending.size) return notify('Wait for your wantlist update to finish.'); show($('#setup')); };
 $('#goBtn').onclick = () => {
   const values = Object.fromEntries(['genre','style','label','country','y1','y2','startAt'].map(k => [k, $('#' + k).value.trim()]));
@@ -128,9 +134,11 @@ function connect(token, username) {
     if (api !== client) return;
     if (model) { model.health = 'unknown'; model.changed(); }
     notify('Your Discogs token was rejected. Reconnect in filters.', 10000);
-  }, onRateLimit:(wait, network) => {
-    if (api !== client) return;
-    if (wait) notify(`${network ? 'Discogs connection interrupted' : 'Discogs rate limit'}. Retrying in ${Math.round(wait / 1000)}s…`, wait + 1000);
+  }, onRateLimit:wait => {
+    if (api !== client || (cards.length && recoveringAt === null)) return;
+    // With no feed yet, explain the delay inline instead of raising a repeated toast.
+    if (wait) $('#emptyMsg').textContent = 'Discogs is reconnecting. Retrying…';
+    else if ($('#emptyMsg').textContent.startsWith('Discogs is reconnecting.')) $('#emptyMsg').textContent = 'Digging through Discogs…';
   }});
   api = client;
   model = new SessionDiscoveries(username, storage, (...args) => client.req(...args), () => { renderDock(); renderSession(); });
@@ -177,9 +185,10 @@ function setBackdrop(song) {
   const src = https(song?.cover || song?.cover2) || (fixture ? song?.cover : '');
   $('#backdrop').style.backgroundImage = src ? `url("${src.replace(/["\\\n\r]/g, '')}")` : 'none';
 }
-function start() {
+async function start() {
   if (!model) return show($('#setup'));
   if (explorer) explorer.stopped = true;
+  const generation = ++feedGeneration; recoveringAt = null; discoveryError = false;
   observer.disconnect();
   stopPlayers(); pool = []; reserve = []; cards = []; active = -1; gap = 15; buffer = 30;
   playing = {source:'feed',song:null,list:[],index:-1}; $('#feed').replaceChildren(); renderDock();
@@ -188,8 +197,14 @@ function start() {
   const yearLabel = years[0] === null ? 'Any year' : years.length > 1 ? `${years[0]}–${years.at(-1)}` : years[0];
   $('#chip').textContent = [opts.style || opts.genre || 'All vinyl',yearLabel,opts.label,opts.country].filter(Boolean).join(' · ');
   $('#empty').hidden = false; $('#spin').hidden = false; $('#emptyAction').hidden = true; $('#emptyMsg').textContent = 'Digging through Discogs…';
-  if (fixture) { fixtureData.songs.forEach(s => addCard({...s})); activate(0); $('#empty').hidden = true; $('#spin').hidden = true; return; }
+  if (fixture) {
+    const checks = await Promise.all(fixtureData.songs.map(s => videoAvailability.check(s.vid)));
+    if (generation !== feedGeneration) return;
+    fixtureData.songs.forEach((s,i) => { if (checks[i] !== false && !deadIds.has(s.vid)) addCard({...s}); });
+    fill(); $('#spin').hidden = true; return;
+  }
   const next = new Explorer(api, {...opts, years, cache, skipVid:{has:id => deadIds.has(id) || (opts.hideSeen !== false && seen.has(id))},
+    checkVideo:id => videoAvailability.check(id),
     shouldPause:() => Math.max(0,cards.length-active-1) + poolVariety(pool,cards.slice(-gap).map(c=>c.song),gap) >= buffer,
     onSongs:(songs, x) => { if (explorer !== x) return; const choice = primaryPick(songs); pool.push(choice.pick); reserve.push(...choice.rest); fill(); },
     onProgress:(x, error) => {
@@ -197,7 +212,13 @@ function start() {
       if (x.total) { gap = adaptiveGap(x.total,x.fetched,x.withSongs); buffer = Math.max(10,2*gap); }
       if (x.done && reserve.length) { pool.push(...reserve); reserve = []; }
       if (x.done) fill();
-      if (error) notify('Discovery interrupted: ' + error.message);
+      if (error) {
+        discoveryError = true;
+        // Background retries stay quiet while there are tracks to browse.
+        if ((!cards.length || recoveringAt !== null) && Date.now()-lastDiscoveryNotice > 60000) {
+          lastDiscoveryNotice = Date.now(); notify('Can’t load tracks right now. Retrying…',10000);
+        }
+      } else discoveryError = false;
       if (params.has('debug')) $('#stats').textContent = JSON.stringify({fetched:x.fetched,stats:x.state.stats,gap,buffer,pool:pool.length},null,2);
       if (x.done && !cards.length) { $('#spin').hidden = true; $('#emptyAction').hidden = false; $('#emptyMsg').textContent = x.total ? 'No playable tracks for this dig. Try another filter or reset seen songs.' : 'No vinyl records found. Try another style or year.'; }
     }});
@@ -210,11 +231,15 @@ function fill() {
     addCard(pool.splice(index,1)[0]);
     if (reserve.length && Math.random() < .15) pool.push(reserve.splice(Math.floor(Math.random()*reserve.length),1)[0]);
   }
-  if (cards.length) { $('#empty').hidden = true; if (active < 0) activate(0); }
+  if (recoveringAt !== null && cards[recoveringAt]) {
+    const index = recoveringAt; recoveringAt = null;
+    $('#feed').scrollTop = cards[index].el.offsetTop; activate(index);
+  }
+  if (cards.length && recoveringAt === null) { $('#empty').hidden = true; if (active < 0) activate(0); }
   preload();
 }
 function addCard(song) {
-  const el = document.createElement('section'), index = cards.length; el.className = 'card'; el.setAttribute('aria-label',song.trackTitle || song.videoTitle);
+  const el = document.createElement('section'); el.className = 'card'; el.setAttribute('aria-label',song.trackTitle || song.videoTitle);
   el.innerHTML = `<div class="composition"><button class="release-meta" aria-label="Explore ${esc(song.releaseTitle)}"><b>${esc(song.releaseTitle)}</b><span>${esc([song.label,song.year,song.country].filter(Boolean).join(' · '))}</span></button><div class="cover-stage"><div class="art">${artHTML(song)}</div></div></div>`;
   wireArt(el.querySelector('.art'));
   el.querySelector('.release-meta').onclick = event => { event.stopPropagation(); openRelease(song); };
@@ -224,10 +249,10 @@ function addCard(song) {
     const now = Date.now();
     if (now-lastTap < 300) { clearTimeout(tapTimer); lastTap = 0; like(song); return; }
     lastTap = now;
-    if (active !== index) return;
+    if (cards[active]?.el !== el) return;
     // Safari needs play/unmute in the original gesture. Only defer pausing for double-tap likes.
     if (!soundOn || !ready[current] || players[current].getPlayerState() !== 1) togglePlay();
-    else tapTimer = setTimeout(() => { if (active === index) pausePlayback(); },300);
+    else tapTimer = setTimeout(() => { if (cards[active]?.el === el) pausePlayback(); },300);
   });
   $('#feed').append(el); cards.push({el,song}); observer.observe(el);
 }
@@ -237,6 +262,7 @@ const observer = new IntersectionObserver(entries => {
 }, {root:$('#feed'),threshold:[.7]});
 function activate(index) {
   active = index; const song = cards[index]?.song; if (!song) return;
+  if (deadIds.has(song.vid)) return discardUnavailable(song.vid);
   if (!seen.has(song.vid)) { seen.add(song.vid); storage.set('dx_seen',[...seen].slice(-20000)); }
   play(song,'feed',[],index); fill();
 }
@@ -244,7 +270,7 @@ function go(direction) {
   let index = active + direction;
   while (cards[index]?.song.dead) index += direction;
   if (cards[index]) cards[index].el.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
-  else if (direction > 0) notify(explorer?.done || fixture ? 'You’ve reached the end of this dig.' : 'Still digging for the next track…');
+  else if (direction > 0) notify(discoveryError ? 'Discovery is reconnecting. Please try again shortly.' : explorer?.done || fixture ? 'You’ve reached the end of this dig.' : 'Still digging for the next track…');
 }
 
 // Playback identity is independent of the feed index: session/panel replay never advances the hidden feed.
@@ -286,7 +312,7 @@ function advance() {
   else { players[current]?.pauseVideo(); notify('End of this selection.'); }
 }
 function onState(k, event) {
-  if (k !== current || !playing.song) return;
+  if (k !== current || !playing.song || loaded[k] !== playing.song.vid) return;
   // Restoring a paused track cues it (state 5); it stays paused until the user resumes.
   $('#paused').style.display = event.data === 2 || (event.data === 5 && !playRequested) ? 'block' : 'none';
   // Paused without the user asking (iOS refused sound): offer the one-time tap again, never a muted fallback.
@@ -303,12 +329,34 @@ function onState(k, event) {
 }
 function onError(k, event) {
   const vid = loaded[k]; if (!vid) return;
-  deadIds.add(vid); stats.dead++; stats.codes[event.data] = (stats.codes[event.data] || 0)+1; saveStats();
-  for (const card of cards) if (card.song.vid === vid) card.song.dead = true;
-  loaded[k] = null;
-  renderDock();
-  if (k === current && playing.song?.vid === vid) { notify(`Video unavailable (YouTube ${event.data}). Skipping…`); advance(); }
-  else preload();
+  stats.codes[event.data] = (stats.codes[event.data] || 0)+1;
+  if (![100,101,150].includes(event.data)) {
+    // HTML5/network and embed-configuration failures do not prove the video was deleted.
+    saveStats(); clearPlaybackTimers();
+    if (k === current) notify('YouTube couldn’t play this track. Tap the cover to retry or open its YouTube link.',10000);
+    return;
+  }
+  if (!deadIds.has(vid)) stats.dead++;
+  deadIds.add(vid); videoAvailability.remember(vid, false); saveStats(); loaded[k] = null;
+  const failedFeed = playing.source === 'feed' && playing.song?.vid === vid;
+  discardUnavailable(vid);
+  if (!failedFeed && k === current && playing.song?.vid === vid) { renderDock(); advance(); }
+}
+function discardUnavailable(vid) {
+  const currentEl = cards[active]?.el, failed = cards[active]?.song.vid === vid;
+  // Keep a covered feed's active slot stable until closing its preview restores the feed.
+  if (failed && playing.source !== 'feed') return;
+  const nextIndex = cards.slice(0,active).filter(c=>c.song.vid !== vid).length;
+  cards = cards.filter(card => {
+    if (card.song.vid !== vid) return true;
+    observer.unobserve(card.el); card.el.remove(); return false;
+  });
+  if (!failed) { active = cards.findIndex(c=>c.el === currentEl); fill(); return; }
+  active = nextIndex-1; recoveringAt = nextIndex;
+  stopPlayers(); playing = {source:'feed',song:null,list:[],index:-1}; renderDock();
+  $('#empty').hidden = false; $('#spin').hidden = !!(explorer?.done || fixture);
+  $('#emptyMsg').textContent = explorer?.done || fixture ? 'No more playable tracks in this dig.' : 'Finding another playable track…';
+  fill();
 }
 function needTap() {
   if (!ready[current] || !playRequested) return;
@@ -513,6 +561,7 @@ document.addEventListener('keydown', event => {
 async function boot() {
   if (fixture) {
     fixtureData = await import('./tests/fixture.js'); opts = {...opts,genre:'Electronic',style:'Minimal techno',y1:'2000',y2:'2001'};
+    videoAvailability = new VideoAvailability({fetcher:url => fixtureData.probeVideo(url, params)});
     api = fixtureData.createAPI(params); model = new SessionDiscoveries('local-demo',storage,(...args)=>api.req(...args),()=>{renderDock();renderSession();});
     await loadWants(); attachPlayers((k,events)=>new fixtureData.FakePlayer(events)); start();
     // Read-only diagnostics and synthetic player events exist only in the localhost fixture.
