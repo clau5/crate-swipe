@@ -248,7 +248,7 @@ function go(direction) {
 }
 
 // Playback identity is independent of the feed index: session/panel replay never advances the hidden feed.
-function snapshot() { return {...playing,time:ready[current] ? players[current].getCurrentTime() : 0,paused:ready[current] ? players[current].getPlayerState() === 2 : false}; }
+function snapshot() { return {...playing,time:ready[current] ? players[current].getCurrentTime() : 0,paused:!playRequested || (ready[current] && [2,5].includes(players[current].getPlayerState()))}; }
 function replay(song, source, list, index) {
   if (playing.source === source && playing.song?.vid === song.vid) return togglePlay();
   if (!returnPlayback && playing.song) returnPlayback = snapshot();
@@ -287,7 +287,8 @@ function advance() {
 }
 function onState(k, event) {
   if (k !== current || !playing.song) return;
-  $('#paused').style.display = event.data === 2 ? 'block' : 'none';
+  // Restoring a paused track cues it (state 5); it stays paused until the user resumes.
+  $('#paused').style.display = event.data === 2 || (event.data === 5 && !playRequested) ? 'block' : 'none';
   // Paused without the user asking (iOS refused sound): offer the one-time tap again, never a muted fallback.
   if (event.data === 2 && playRequested && soundOn && !unlocked[k]) needTap();
   if (event.data === 1) {
