@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000">
 <title>Crate Swipe</title>
-<meta name="app-version" content="crate-swipe 2.2.0 (2026-10-24)">
+<meta name="app-version" content="crate-swipe 2.3.0 (2026-10-24)">
 <style>
 :root{--S:min(84vw,46vh,520px);--cy:45%;--PS:calc(min(34vh,56.25vw) - 94px);--pcy:calc(var(--safe-t) + 52px + var(--PS)/2);--bg:#000;--fg:#fff;--mut:#aaa;--acc:#ff2d55;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -139,7 +139,7 @@ body.panel #panel{display:block}
   <div class="row" style="margin-top:14px"><button class="pill" id="resetSeen">Reset seen songs</button><button class="pill" id="changeTok">Change token</button><button class="pill" id="closePick">Close</button></div>
   <p class="small">Only YouTube videos already linked on Discogs releases are used (no YouTube search). Vinyl only. Swipe up/down (or ↑/↓ keys). Double-tap or ♥ adds the release to your Discogs wantlist; do it again to remove it. Keys: Space pause · L like · E explore · M mute.</p>
   <p class="small" id="seenCount"></p>
-  <p class="small">Version 2.2.0</p>
+  <p class="small">Version 2.3.0</p>
   <div class="stats" id="stats"></div>
   <button class="pill" id="resetStats" style="margin-top:8px">Reset stats</button>
 </div>
@@ -261,19 +261,30 @@ function slimRelease(r){ // what we keep in the cache
     tracklist:(r.tracklist||[]).map(t=>({position:t.position,title:t.title,duration:t.duration,type_:t.type_,artists:t.artists&&t.artists.map(a=>({name:a.name,anv:a.anv,join:a.join})),sub_tracks:t.sub_tracks&&t.sub_tracks.map(x=>({position:x.position,title:x.title,duration:x.duration,type_:x.type_}))})),
     videos:(r.videos||[]).map(v=>({uri:v.uri,title:v.title,duration:v.duration,embed:v.embed}))};
 }
-// ---- Feed order: never two songs from the same release/master back to back; spread them >= gap cards apart when the pool allows ----
-function songKeys(s){const k=['r'+s.releaseId];if(s.masterId)k.push('m'+s.masterId);return k;}
-// recent = songs already in the feed (most recent last). Picks uniformly among eligible songs, i.e. releases weighted by how many songs they have left.
-function pickNext(pool,recent,gap,rnd){rnd=rnd||Math.random;
-  const block=new Set();if(gap>0)recent.slice(-gap).forEach(s=>songKeys(s).forEach(k=>block.add(k)));
-  const ok=[];pool.forEach((s,i)=>{if(!songKeys(s).some(k=>block.has(k)))ok.push(i);});
+// ---- Feed order: never two songs from the same release/master back to back; spread release, master and artist >= gap cards apart when the pool allows ----
+// keys: release, master (other pressings) and artist (not "Various")
+function songKeys(s){const k=['r'+s.releaseId];if(s.masterId)k.push('m'+s.masterId);
+  if(s.artist&&!/^various\b/i.test(s.artist)){const a=norm(s.artist);if(a)k.push('a'+a);}return k;}
+function relKeys(s){return songKeys(s).filter(k=>k[0]!=='a');}
+// recent = songs already in the feed (most recent last). Picks uniformly among eligible songs (the pool holds ~1 song per release, so ~uniform over releases).
+function pickNext(pool,recent,gap,rnd,keys){rnd=rnd||Math.random;keys=keys||songKeys;
+  const block=new Set();if(gap>0)recent.slice(-gap).forEach(s=>keys(s).forEach(k=>block.add(k)));
+  const ok=[];pool.forEach((s,i)=>{if(!keys(s).some(k=>block.has(k)))ok.push(i);});
   return ok.length?ok[Math.floor(rnd()*ok.length)]:-1;}
-// Choose the next card. With a cushion of cards ahead we wait for more variety (the next release is ~1 s away) instead of relaxing the gap;
-// the gap is relaxed only as the viewer is about to run out of cards, and never to 0: two songs of one release are never back to back
-// (if only such songs are left at the very end of a dig, they are not shown).
+// Choose the next card. With a cushion of cards ahead we wait for more variety instead of relaxing the gap; the gap is relaxed only
+// as the viewer is about to run out of cards, and never to 0: two songs of one release are never back to back.
+// At each gap the artist spacing is dropped before the release/master spacing is. o.info (optional) receives the gap actually used.
 function chooseNext(pool,recent,o){const G=o.gap||6;const floor=o.ahead>=2?G:o.ahead===1?Math.min(3,G):1;
-  let i=-1;for(let g=G;g>=floor&&i<0;g--)i=pickNext(pool,recent,g,o.rnd);
+  let i=-1,g=G,art=true;for(;g>=floor;g--){i=pickNext(pool,recent,g,o.rnd,songKeys);if(i>=0){art=true;break;}i=pickNext(pool,recent,g,o.rnd,relKeys);if(i>=0){art=false;break;}}
+  if(o.info){o.info.gap=i>=0?g:null;o.info.artist=i>=0?art:null;}
   return i;}
+// One song per release goes into the feed pool (a confident track match if there is one); the rest go to a reserve that drips back in.
+function primaryPick(songs,rnd){rnd=rnd||Math.random;const hi=songs.filter(s=>s.conf==='high'),from=hi.length?hi:songs;
+  const pick=from[Math.floor(rnd()*from.length)];return {pick,rest:songs.filter(s=>s!==pick)};}
+// Spacing target from the size of the dig: ~ a quarter of the releases we expect to be playable, between 4 and 15.
+// total = search matches, fetched/withSongs = releases fetched so far / those that gave songs.
+function adaptiveGap(total,fetched,withSongs,max){max=max||15;if(!total)return max;
+  const est=total*((withSongs||0)+1)/((fetched||0)+2);return Math.max(4,Math.min(max,Math.floor(est/4)));}
 // how much usable variety the pool holds: distinct releases not used in the last `gap` cards (a release with many songs counts as 2).
 // Used to decide when to keep fetching, so the dig never pauses while the pool only holds songs we can't place yet.
 function poolVariety(pool,recent,gap){const block=new Set();(recent||[]).slice(-(gap||0)).forEach(s=>songKeys(s).forEach(k=>block.add(k)));
@@ -317,12 +328,14 @@ class Discogs{
   }
 }
 
-// Explorer: pulls search pages in random order, skips repeat masters BEFORE fetching, fetches releases (cache first), emits songs.
+// Explorer: pulls search pages in random order into a ~300-release candidate buffer, draws releases from it at random,
+// skips masters that already gave songs, fetches releases (cache first), emits songs.
 class Explorer{
   constructor(api,opts){
     this.api=api;this.o=opts;this.cache=opts.cache||null;this.state={seenVid:new Set(),seenKey:new Set(),skipVid:opts.skipVid||null,stats:{}};
     this.seenMaster=new Set();this.pending=[];this.yearsLeft=shuffle((opts.years||[null]).slice());this.hits=[];
     this.releases=new Map();this.stopped=false;this.total=0;this.scanned=0;this.fetched=0;this.cacheHits=0;this.done=false;this.wantIds=opts.wantIds||new Set();
+    this.exhausted=false;this.withSongs=0;this.page1=new Map();this.hitTarget=opts.hitTarget||300;
     this.onSongs=opts.onSongs||(()=>{});this.onProgress=opts.onProgress||(()=>{});this.maxReleases=opts.maxReleases||Infinity;this.shouldPause=opts.shouldPause||(()=>false);
   }
   qs(year,page){const p=new URLSearchParams({type:'release',format:'Vinyl',per_page:'100',page:String(page)});
@@ -336,44 +349,53 @@ class Explorer{
   async _page(year,page){
     const path=this.qs(year,page);
     const d=await this._cached('s:'+path,7,()=>this.api.get(path,1),d=>({pagination:d.pagination,results:(d.results||[]).filter(r=>r.type==='release').map(r=>({id:r.id,type:r.type,master_id:r.master_id,title:r.title,year:r.year,label:r.label,cover_image:r.cover_image,thumb:r.thumb,country:r.country,in_wantlist:r.user_data&&r.user_data.in_wantlist}))}));
-    if(page===1){
+    if(page===1&&!this.page1.has(year)){
       const pages=Math.min(d.pagination?d.pagination.pages:1,100); // Discogs search stops at 10,000 results (100 pages x 100)
       this.total+=d.pagination?d.pagination.items:0;
       for(let p=2;p<=pages;p++)this.pending.push([year,p]);
+      // page 1 is always the same 100 releases for a dig: with more than 3 pages, file it as just another page (drawn at random later, no extra call)
+      if(pages>3){this.page1.set(year,d);this.pending.push([year,1]);return;}
+      this.page1.set(year,null);
     }
     const rs=d.results||[];
     rs.forEach(r=>{if(r.in_wantlist)this.wantIds.add(r.id);});
-    // dedupe by master from the search results, before any release call
-    for(const r of shuffle(rs)){
-      if(r.master_id){if(this.seenMaster.has(r.master_id)){this.state.stats.sameMaster=(this.state.stats.sameMaster||0)+1;continue;}this.seenMaster.add(r.master_id);}
-      this.hits.push(r);
-    }
+    for(const r of rs){if(r.master_id&&this.seenMaster.has(r.master_id)){this.state.stats.sameMaster=(this.state.stats.sameMaster||0)+1;continue;}this.hits.push(r);}
   }
   async _nextHits(){
     if(this.yearsLeft.length&&(!this.pending.length||Math.random()<0.5)){const y=this.yearsLeft.pop();return this._page(y,1);}
-    if(this.pending.length){const i=Math.floor(Math.random()*this.pending.length);const [y,p]=this.pending.splice(i,1)[0];return this._page(y,p);}
-    this.done=true;
+    if(this.pending.length){const i=Math.floor(Math.random()*this.pending.length);const [y,p]=this.pending.splice(i,1)[0];
+      if(p===1&&this.page1.get(y)){const d=this.page1.get(y);this.page1.set(y,null);return this._use(d);}
+      return this._page(y,p);}
+    this.exhausted=true;
   }
+  _use(d){const rs=d.results||[];rs.forEach(r=>{if(r.in_wantlist)this.wantIds.add(r.id);});
+    for(const r of rs){if(r.master_id&&this.seenMaster.has(r.master_id)){this.state.stats.sameMaster=(this.state.stats.sameMaster||0)+1;continue;}this.hits.push(r);}}
   async run(){
     while(!this.stopped){
       if(this.shouldPause()){await new Promise(r=>setTimeout(r,400));continue;}
       if(this.fetched>=this.maxReleases){this.done=true;break;}
-      if(!this.hits.length){try{await this._nextHits();}catch(e){this.onProgress(this,e);if(e.status===401)break;await new Promise(r=>setTimeout(r,3000));}
-        if(this.done&&!this.hits.length)break;continue;}
-      const hit=this.hits.shift();this.scanned++;
+      // keep a large candidate buffer (only 1 release needed during the first few, so the first song isn't delayed), then draw at random
+      const target=this.fetched<8?1:this.hitTarget;
+      if(this.hits.length<target&&!this.exhausted){try{await this._nextHits();}catch(e){this.onProgress(this,e);if(e.status===401)break;await new Promise(r=>setTimeout(r,3000));}
+        continue;}
+      if(!this.hits.length)break;
+      const hit=this.hits.splice(Math.floor(Math.random()*this.hits.length),1)[0];
+      // another pressing of a record that already gave songs: skip before any release call
+      if(hit.master_id&&this.seenMaster.has(hit.master_id)){this.state.stats.sameMaster=(this.state.stats.sameMaster||0)+1;continue;}
+      this.scanned++;
       let rel;try{rel=await this._cached('r:'+hit.id,90,()=>this.api.get('/releases/'+hit.id,1),slimRelease);}catch(e){this.onProgress(this,e);continue;}
       if(this.stopped)break;
       this.fetched++;
       if(rel.videos&&rel.videos.length)this.state.stats.releasesWithVideos=(this.state.stats.releasesWithVideos||0)+1;
       this.releases.set(rel.id,{rel,hit});
       const songs=releaseToSongs(rel,hit,this.state);
-      if(songs.length)this.onSongs(songs,this);
+      if(songs.length){this.withSongs++;const m=rel.master_id||hit.master_id;if(m)this.seenMaster.add(m);this.onSongs(songs,this);}
       this.onProgress(this);
     }
     this.done=true;this.onProgress(this);
   }
 }
-if(typeof module!=='undefined')module.exports={songKeys,pickNext,chooseNext,poolVariety,norm,cleanTitle,mixName,matchTrack,songCheck,releaseToSongs,slimRelease,flattenTracks,ytId,parseDur,dice,artistString,Discogs,Explorer,shuffle,GENRES,STYLES};
+if(typeof module!=='undefined')module.exports={songKeys,relKeys,pickNext,chooseNext,primaryPick,adaptiveGap,poolVariety,norm,cleanTitle,mixName,matchTrack,songCheck,releaseToSongs,slimRelease,flattenTracks,ytId,parseDur,dice,artistString,Discogs,Explorer,shuffle,GENRES,STYLES};
 /*CORE-END*/
 </script>
 
@@ -387,7 +409,8 @@ let wantIds=new Set(),wantMasters=new Map(); // masterId -> wanted releaseId
 let seen=new Set(LS.get('dx_seen',[]));
 let stats=LS.get('dx_stats',{played:0,dead:0,codes:{},deadIds:[]});let deadIds=new Set(stats.deadIds||[]);
 let opts=Object.assign({genre:'Electronic',style:'Techno',label:'',country:'',y1:'1995',y2:'',startAt:'0',hideSeen:true,autoNext:true},LS.get('dx_opts',{}));
-const BUFFER=10; // ready songs kept ahead of the visible card
+let BUFFER=30; // cards ahead + distinct placeable releases in the pool before the dig pauses (~2x GAP)
+const DEBUG=new URLSearchParams(location.search).has('debug');let reserve=[],lastPick=null;
 
 // ---------- IndexedDB cache for search pages + releases (repeat sessions cost no API calls) ----------
 const CACHE_MAX=4000;
@@ -456,30 +479,40 @@ function ahead(){return pool.length+Math.max(0,cards.length-active-1);}
 function start(){
   if(!api&&!initApi()){$('#setup').classList.add('open');return;}
   if(ex)ex.stopped=true;
-  pool=[];cards=[];active=-1;$('#feed').innerHTML='';stopPlayers();
+  pool=[];reserve=[];GAP=15;BUFFER=30;cards=[];active=-1;$('#feed').innerHTML='';stopPlayers();
   let years=[null];const a=parseInt(opts.y1),b=parseInt(opts.y2);
   if(a&&b){const lo=Math.min(a,b),hi=Math.min(Math.max(a,b),lo+60);years=[];for(let y=lo;y<=hi;y++)years.push(y);}else if(a)years=[a];
   $('#chip').textContent=[opts.style||opts.genre||'All vinyl',opts.label,opts.country,years[0]===null?'any year':(years.length>1?years[0]+'–'+years[years.length-1]:years[0])].filter(Boolean).join(' · ');
   $('#empty').style.display='flex';$('#spin').style.display='block';$('#emptyMsg').textContent='Digging through Discogs…';
   ex=new Explorer(api,{genre:opts.genre,style:opts.style,label:opts.label,country:opts.country,years,wantIds,skipVid:skipSet,cache:idb,
     shouldPause:()=>Math.max(0,cards.length-active-1)+poolVariety(pool,cards.slice(-GAP).map(c=>c.song),GAP)>=BUFFER,
-    onSongs:(songs)=>{pool.push(...songs);fill();},
-    onProgress:(x,err)=>{const s=x.state.stats;if(!/rate limit/.test($('#status').textContent)||!err)status(`${x.fetched} releases · ${s.songs||0} songs${x.total?' · ~'+x.total.toLocaleString()+' releases match':''}${err?' · '+err.message:''}${x.done?' · all done':''}`);
+    onSongs:(songs)=>{const {pick,rest}=primaryPick(songs);pool.push(pick);reserve.push(...rest);fill();},
+    onProgress:(x,err)=>{if(x.total){GAP=adaptiveGap(x.total,x.fetched,x.withSongs);BUFFER=Math.max(10,2*GAP);}
+      if(x.done&&reserve.length){pool.push(...reserve);reserve=[];} // dig finished: let the remaining songs inconst s=x.state.stats;if(!/rate limit/.test($('#status').textContent)||!err)status(`${x.fetched} releases · ${s.songs||0} songs${x.total?' · ~'+x.total.toLocaleString()+' releases match':''}${err?' · '+err.message:''}${x.done?' · all done':''}`);
       if(x.done)fill();
       if(x.done&&!cards.length){$('#spin').style.display='none';$('#emptyMsg').textContent=x.total>0?'No playable songs found for this search (no linked videos, or all seen). Try another style/year, or reset seen songs.':'Discogs found no vinyl releases for this search. Check the style/label/country spelling.';}}});
   ex.run();
 }
 // keep 3 cards built ahead of the visible one, picked randomly from the ready pool
-const GAP=6; // aim for >= 6 other cards between two songs of the same release or master
+let GAP=15; // aim for >= GAP other cards between two songs of the same release, master or artist (adapted to the dig size)
 function fill(){
+  const info={};let used=null;
   while(pool.length&&cards.length-active<4){
-    const i=chooseNext(pool,cards.slice(-GAP).map(c=>c.song),{gap:GAP,ahead:cards.length-active-1});
+    const i=chooseNext(pool,cards.slice(-GAP).map(c=>c.song),{gap:GAP,ahead:cards.length-active-1,info});
     if(i<0)break; // wait for songs from other releases to stream in
-    addCard(pool.splice(i,1)[0]);}
+    addCard(pool.splice(i,1)[0]);used=lastPick=Object.assign({},info);
+    if(reserve.length&&Math.random()<.15)pool.push(reserve.splice(Math.floor(Math.random()*reserve.length),1)[0]);} // 15% drip of a release's other songs
+  if(DEBUG)debugLog(used||lastPick);
   if(cards.length)$('#empty').style.display='none';
   if(active<0&&cards.length)setActive(0);
   else preloadNext();
 }
+function debugLog(used){
+  const rel=new Set(pool.map(s=>s.releaseId)),art=new Set(pool.map(s=>norm(s.artist)));
+  const d={pool:pool.length,poolReleases:rel.size,poolArtists:art.size,reserve:reserve.length,ahead:Math.max(0,cards.length-active-1),cards:cards.length,GAP,BUFFER,gapUsed:used?used.gap:'-',artistSpaced:used?used.artist:'-',fetched:ex?ex.fetched:0,hits:ex?ex.hits.length:0};
+  console.log('[feed]',JSON.stringify(d));
+  let el=document.getElementById('dbg');if(!el){el=document.createElement('pre');el.id='dbg';el.style.cssText='position:fixed;left:4px;bottom:4px;z-index:99;margin:0;padding:4px 6px;font:10px/1.3 monospace;color:#0f0;background:rgba(0,0,0,.7);pointer-events:none;white-space:pre-wrap;max-width:60vw';document.body.appendChild(el);}
+  el.textContent=Object.entries(d).map(([k,v])=>k+' '+v).join('\n');}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 // cover art element: primary image, then the search cover, then a neutral placeholder with artist/title
 function artHtml(song){const src=song.cover||song.cover2;
