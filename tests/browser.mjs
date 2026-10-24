@@ -23,6 +23,46 @@ async function open(query='fixture=1') {await page.goto(base+'/?'+query);await p
 async function calls(){return page.evaluate(()=>window.crateFixture.api.calls.filter(c=>c.method!=='GET'));}
 try {
   await open();
+  await check('pause during sound verification never reveals the YouTube tile',async()=>{
+    await page.locator('#sound').click();
+    await page.locator('.card .art').first().click();
+    await page.waitForTimeout(1200);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players.find(p=>p.vid===window.crateFixture.playing.song.vid).getPlayerState()),2);
+    assert.equal(await page.locator('.unlock').count(),0);
+    assert.equal(await page.locator('#hint').isVisible(),false);
+    await page.screenshot({path:output+'/mobile-paused.png'});
+    // Resuming must reach the player in the click handler, without a delayed gesture.
+    await page.locator('.card .art').first().click();
+    assert.equal(await page.evaluate(()=>window.crateFixture.players.find(p=>p.vid===window.crateFixture.playing.song.vid).getPlayerState()),1);
+    await page.screenshot({path:output+'/mobile-pause-resume.png'});
+    await open();
+  });
+  await check('first-time blocked sound can still unlock over the active cover',async()=>{
+    await page.locator('#feed').evaluate(el=>el.scrollTop=874);
+    await page.waitForFunction(()=>window.crateFixture.active===1);
+    await page.evaluate(()=>{
+      const p=window.crateFixture.players.find(p=>p.vid===window.crateFixture.playing.song.vid);
+      p.playVideo=function(){this.emitState(2);};
+    });
+    await page.locator('#sound').click();await page.locator('.unlock').waitFor();
+    const tile=await page.locator('.unlock').boundingBox(), cover=await page.locator('.card .art').nth(1).boundingBox();
+    assert.ok(Math.abs(tile.y-cover.y)<1 && Math.abs(tile.height-cover.height)<1,JSON.stringify({tile,cover}));
+    await page.evaluate(()=>window.crateFixture.players.find(p=>p.vid===window.crateFixture.playing.song.vid).emitState(1));
+    assert.equal(await page.locator('.unlock').count(),0);
+    assert.equal(await page.locator('#hint').isVisible(),false);
+    await open();
+  });
+  await check('buffering during sound verification does not reveal the YouTube tile',async()=>{
+    await page.evaluate(()=>{
+      const p=window.crateFixture.players.find(p=>p.vid===window.crateFixture.playing.song.vid);
+      p.playVideo=function(){this.emitState(3);};
+    });
+    await page.locator('#sound').click();await page.waitForTimeout(1200);
+    assert.equal(await page.locator('.unlock').count(),0);
+    await page.evaluate(()=>window.crateFixture.players.find(p=>p.vid===window.crateFixture.playing.song.vid).emitState(1));
+    assert.equal(await page.locator('#sound').isVisible(),false);
+    await open();
+  });
   await check('reference screen geometry and local assets',async()=>{
     assert.equal(await page.locator('#track').innerText(),'Tried and true');
     const cover=await page.locator('.card .art').first().boundingBox(),bar=await page.locator('#bar').boundingBox(),dock=await page.locator('#dock').boundingBox();
