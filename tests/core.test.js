@@ -17,3 +17,14 @@ test('dry-run writes never invoke fetch',async()=>{
   const original=globalThis.fetch;globalThis.fetch=()=>{throw Error('should not fetch');};
   try {const api=new Discogs('not-a-key',{dryRun:true});await api.req('PUT','/users/test/wants/1');await api.req('DELETE','/users/test/wants/1');assert.equal(api.dryLog.length,2);assert.equal(api.count,0);} finally{globalThis.fetch=original;}
 });
+test('a known dead upload does not hide a working upload of the same track',()=>{
+  const rel={id:7,artists:[{name:'Example'}],tracklist:[{title:'Night drive',position:'A1'}],videos:['aaaaaaaaaaa','bbbbbbbbbbb'].map(id=>({title:'Example - Night drive',uri:'https://youtu.be/'+id,duration:240}))};
+  const songs=releaseToSongs(rel,null,{seenVid:new Set(),seenKey:new Set(),skipVid:new Set(['aaaaaaaaaaa']),stats:{}});
+  assert.deepEqual(songs.map(s=>s.vid),['bbbbbbbbbbb']);
+});
+test('discovery checks candidates before emitting cards and can use an alternate upload',async()=>{
+  const rel={id:7,artists:[{name:'Example'}],tracklist:[{title:'Night drive',position:'A1'}],videos:['aaaaaaaaaaa','bbbbbbbbbbb'].map(id=>({title:'Example - Night drive',uri:'https://youtu.be/'+id,duration:240}))};
+  const emitted=[];
+  const ex=new Explorer({get:async path=>path.startsWith('/database')?{pagination:{pages:1,items:1},results:[{id:7,type:'release'}]}:rel}, {maxReleases:1,checkVideo:async id=>id!=='aaaaaaaaaaa',onSongs:songs=>emitted.push(...songs)});
+  await ex.run();assert.deepEqual(emitted.map(s=>s.vid),['bbbbbbbbbbb']);
+});

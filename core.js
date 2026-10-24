@@ -92,6 +92,7 @@ function releaseToSongs(rel,hit,state){
     if(!id){inc('notYoutube');continue;}
     if(v.embed===false){inc('noEmbed');continue;}
     const bad=songCheck(v);if(bad){inc('skip_'+bad);continue;}
+    if(state.skipVid&&state.skipVid.has(id)){inc('skipKnown');continue;}
     if(state.seenVid.has(id)){inc('dupVideo');continue;}
     state.seenVid.add(id);
     const m=matchTrack(v,rel);
@@ -101,7 +102,6 @@ function releaseToSongs(rel,hit,state){
       if(state.seenKey.has(key)){inc('dupSong');if(state.dupLog)state.dupLog.push(key+'  <=  '+v.title);continue;}
       state.seenKey.add(key);
     }
-    if(state.skipVid&&state.skipVid.has(id)){inc('skipKnown');continue;}
     inc('songs');inc('conf_'+m.conf);
     songs.push({vid:id,videoTitle:v.title||'',duration:v.duration||0,trackTitle:m.track?m.track.title.trim():null,position:m.track?m.track.position:null,conf:m.conf,score:m.score,
       artist,releaseId:rel.id,masterId:rel.master_id||0,releaseTitle:rel.title,label,year:rel.year||(hit&&hit.year)||'',country:rel.country||'',cover,cover2,thumb:(hit&&hit.thumb)||cover,url:rel.uri||('https://www.discogs.com/release/'+rel.id)});
@@ -242,7 +242,15 @@ class Explorer{
       this.fetched++;
       if(rel.videos&&rel.videos.length)this.state.stats.releasesWithVideos=(this.state.stats.releasesWithVideos||0)+1;
       this.releases.set(rel.id,{rel,hit});
-      const songs=releaseToSongs(rel,hit,this.state);
+      // Check before deduplication: a dead upload must not claim the track's key and hide a working upload.
+      let playable=rel;
+      if(this.o.checkVideo){
+        const videos=rel.videos||[];
+        const checks=await Promise.all(videos.map(v=>{const id=ytId(v.uri);return id&&v.embed!==false&&!this.state.skipVid?.has(id)?this.o.checkVideo(id):true;}));
+        if(this.stopped)break;
+        playable={...rel,videos:videos.filter((v,i)=>checks[i]!==false)};
+      }
+      const songs=releaseToSongs(playable,hit,this.state);
       if(songs.length){this.withSongs++;const m=rel.master_id||hit.master_id;if(m)this.seenMaster.add(m);this.onSongs(songs,this);}
       this.onProgress(this);
     }
