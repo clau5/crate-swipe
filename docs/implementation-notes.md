@@ -78,6 +78,14 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - Artist / track type reduced for real devices: 16/20 and 18/22 (14/18 and 16/20 on screens ≤650px tall and in the release sheet's mini dock).
 - Browser geometry check updated: cover y 271, dock y 701 on 402 × 874, plus computed radius, font sizes, blur, glow size and glow-above-centre assertions.
 
+
+## 3.1.3-dev — quieter cover sound hint
+
+- The “Tap the cover once…” unlock hint only arms when the YouTube player is **paused** after play was requested (Safari refused sound).
+- Slow loads that sit in unstarted/cued past 3.5s no longer flash that hint and then clear it when buffering starts.
+- Same rule for the post–sound-tap 1s check. The real paused-without-unlock path in `onState` is unchanged.
+- Dev-only (`crate-swipe-dev`). Production `crate-swipe` stays on 3.1.1.
+
 ## 3.1.2-dev (background auto-next via the player playlist)
 
 Dev-only build, published from `clau5/crate-swipe-dev` (https://clau5.github.io/crate-swipe-dev/). Production stays on 3.1.1.

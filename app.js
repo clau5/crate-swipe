@@ -335,7 +335,10 @@ function play(song, source = 'feed', list = [], index = -1, time = null, paused 
     $('#paused').style.display = 'block';
   } else {
     if (ids) player.loadPlaylist({playlist:ids,index:0,startSeconds:offset}); else player.loadVideoById({videoId:song.vid,startSeconds:offset});
-    startTimer = setTimeout(() => { const state = player.getPlayerState(); if (state !== 1 && state !== 3) needTap(); },3500);
+    startTimer = setTimeout(() => {
+      // Only paused (2) means Safari refused playback. Unstarted/cued is still loading — don't flash the cover hint.
+      const state = player.getPlayerState(); if (state === 2) needTap();
+    },3500);
   }
   updateSound();
 }
@@ -468,8 +471,10 @@ function soundTap() {
   const k = current; playRequested = true; soundOn = true; players[k].unMute(); players[k].setVolume(100); players[k].playVideo();
   soundTimer = setTimeout(() => {
     if (k !== current || !playRequested) return;
-    if (players[k].getPlayerState() === 1 && !players[k].isMuted()) unlocked[k] = true;
-    else if (players[k].getPlayerState() !== 3) needTap();
+    const state = players[k].getPlayerState();
+    if (state === 1 && !players[k].isMuted()) unlocked[k] = true;
+    // Paused after an unmute attempt: iOS blocked sound. Still loading (unstarted/cued) is fine.
+    else if (state === 2) needTap();
     updateSound();
   },1000); updateSound();
 }
