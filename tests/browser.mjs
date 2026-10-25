@@ -90,6 +90,7 @@ try {
         const allowed=()=>q.muted||q.gestureOK||!!navigator.userActivation?.isActive;
         q.playVideo=function(){if(!allowed()){window.crateIOS.refused++;return this.emitState(2);}if(!this.muted)this.gestureOK=true;this.emitState(1);};
         q.loadVideoById=function({videoId,startSeconds=0}){const ok=allowed();if(ok&&!this.muted)this.gestureOK=true;if(!ok)window.crateIOS.refused++;this.vid=videoId;this.time=startSeconds;queueMicrotask(()=>this.emitState(ok?1:2));};
+        q.loadPlaylist=function({playlist,index=0,startSeconds=0}){const ok=allowed();if(ok&&!this.muted)this.gestureOK=true;if(!ok)window.crateIOS.refused++;this.loads++;this.list=[...playlist];this.idx=index;this.vid=this.list[index];this.time=startSeconds;queueMicrotask(()=>this.emitState(ok?1:2));};
       }
     });
     assert.equal(await page.evaluate(()=>window.crateIOS.playerCount),1,'exactly one YouTube player');
@@ -109,6 +110,52 @@ try {
     await page.locator('#feed').evaluate(el=>el.scrollTop=874);await page.waitForTimeout(150);await expectSound(1);
     assert.equal(await page.evaluate(()=>window.crateIOS.refused),0,'iOS never refused sound after the first tap');
     await open();
+  });
+  await check('feed auto-next is chained by the player playlist, not by a reload (background-safe)',async()=>{
+    await page.locator('#sound').click();
+    await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
+    const ids=await page.evaluate(()=>window.crateFixture.players[0].getPlaylist());
+    assert.deepEqual(ids,['aaaaaaaaaaa','bbbbbbbbbbb','ccccccccccc','ddddddddddd'],'one playlist: current card then upcoming cards');
+    const loads=await page.evaluate(()=>window.crateFixture.players[0].loads);
+    for(const [i,vid,title] of [[1,'bbbbbbbbbbb','A quiet place'],[2,'ccccccccccc','Somewhere new']]) {
+      await page.evaluate(()=>window.crateFixture.players[0].emitState(0));
+      await page.waitForFunction(i=>window.crateFixture.active===i,i);
+      assert.equal(await page.evaluate(()=>window.crateFixture.playing.song.vid),vid);
+      assert.equal(await page.locator('#track').innerText(),title);
+      assert.equal(await page.evaluate(()=>window.crateFixture.players[0].isMuted()),false);
+      assert.match(await page.evaluate(()=>document.querySelector('#backdrop').style.backgroundImage),/reference-cover/);
+      assert.equal(await page.evaluate(vid=>JSON.parse(localStorage.getItem('dx_seen')).includes(vid),vid),true);
+      const offset=await page.evaluate(i=>Math.abs(document.querySelector('#feed').scrollTop-document.querySelectorAll('.card')[i].offsetTop),i);
+      assert.ok(offset<=1,'feed scrolled to the playing card');
+    }
+    await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].loads),loads,'player advanced itself; the app never reloaded it: '+await page.evaluate(()=>JSON.stringify(window.crateFixture.players[0].history)));
+    assert.equal(await page.evaluate(()=>window.crateFixture.active),2,'no double advance');
+    // A swipe rebuilds the queue from the chosen card.
+    await page.locator('#feed').evaluate(el=>el.scrollTop=0);await page.waitForFunction(()=>window.crateFixture.active===0);
+    assert.deepEqual(await page.evaluate(()=>window.crateFixture.players[0].getPlaylist()),ids);
+    await open();
+  });
+  await check('returning from the background syncs a moved chain or restarts an ended one',async()=>{
+    await page.locator('#sound').click();await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
+    // JS was suspended: the player moved two songs on without any event reaching the page.
+    await page.evaluate(()=>{const p=window.crateFixture.players[0];p.idx=2;p.vid=p.list[2];p.state=1;document.dispatchEvent(new Event('visibilitychange'));});
+    await page.waitForFunction(()=>window.crateFixture.active===2);
+    assert.equal(await page.locator('#track').innerText(),'Somewhere new');
+    // The chain ran dry while hidden: pageshow restarts playback on the next card.
+    await page.evaluate(()=>{const p=window.crateFixture.players[0];p.list=null;p.state=0;window.dispatchEvent(new Event('pageshow'));});
+    await page.waitForFunction(()=>window.crateFixture.active===3);
+    await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].vid),'ddddddddddd');
+    await open();
+  });
+  await check('turning auto-next off keeps single-video playback with no queue',async()=>{
+    await page.evaluate(()=>{localStorage.setItem('dx_opts',JSON.stringify({autoNext:false}));});await open();
+    await page.locator('#sound').click();await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].getPlaylist()),null);
+    await page.evaluate(()=>window.crateFixture.players[0].emitState(0));await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(()=>window.crateFixture.active),0);
+    await page.evaluate(()=>localStorage.removeItem('dx_opts'));await open();
   });
   await check('the YouTube player is never visible: playing, paused, buffering, ended, error, mid-swipe, unlock',async()=>{
     // Paint the player area magenta through a stand-in iframe, then look for magenta pixels on screen.
@@ -134,7 +181,7 @@ try {
     await page.evaluate(`${p}.events.onError({data:150})`);await page.waitForTimeout(100);await visible('error');
     await page.evaluate(`${p}.emitState(0)`);await page.waitForTimeout(100);await visible('ended');
     // iOS refusing sound arms the transparent tap target over the cover: still no video.
-    await page.evaluate(`${p}.playVideo=function(){this.emitState(2);};${p}.loadVideoById=function({videoId}){this.vid=videoId;queueMicrotask(()=>this.emitState(2));};`);
+    await page.evaluate(`${p}.playVideo=function(){this.emitState(2);};${p}.loadVideoById=function({videoId}){this.vid=videoId;queueMicrotask(()=>this.emitState(2));};${p}.loadPlaylist=function({playlist}){this.list=[...playlist];this.idx=0;this.vid=playlist[0];queueMicrotask(()=>this.emitState(2));};`);
     await page.evaluate(()=>window.crateFixture.players[0].events.onStateChange({data:2}));
     await page.locator('#feed').evaluate(el=>el.scrollTop=0);await page.waitForFunction(()=>window.crateFixture.active===0);
     await page.locator('.unlock').waitFor();await visible('waiting for the sound tap');

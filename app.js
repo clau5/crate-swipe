@@ -3,6 +3,7 @@ import {SessionDiscoveries, GuestDiscoveries, guestStatus, trackKey} from './ses
 import {VideoAvailability} from './video-availability.js';
 import {CatalogueClient} from './catalogue-client.js';
 import {sharedCatalogueToken} from './config.js';
+import {PLAYLIST_MAX, playlistWindow, playlistMove, shouldRefresh} from './playlist.js';
 
 const $ = selector => document.querySelector(selector);
 const storage = {
@@ -31,7 +32,10 @@ let playing = {source:'feed', song:null, list:[], index:-1};
 // first tap; reusing that iframe (loadVideoById) keeps the permission for every later swipe.
 const players = [null], ready = [false], loaded = [null];
 const unlocked = [false];
-let current = 0, soundOn = false, playRequested = false, startTimer, verifyTimer, soundTimer, seekDragging = false;
+let current = 0, soundOn = false, playRequested = false, startTimer, verifyTimer, soundTimer, endTimer, seekDragging = false;
+// Feed playback hands YouTube a playlist so the player itself starts the next song, even while iOS
+// suspends this page. playlistIds mirrors what the player holds; pending until it reports the first item.
+let playlistIds = null, playlistPending = false;
 const wrap = () => $('#pA');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const https = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } };
@@ -255,7 +259,7 @@ async function start() {
   explorer = next; next.run().catch(() => notify('Discovery stopped. Change your filters to try again.'));
 }
 function fill() {
-  while (pool.length && cards.length-active < 4) {
+  while (pool.length && cards.length-active <= PLAYLIST_MAX) {
     const index = chooseNext(pool,cards.slice(-gap).map(c=>c.song),{gap,ahead:cards.length-active-1});
     if (index < 0) break;
     addCard(pool.splice(index,1)[0]);
@@ -323,12 +327,54 @@ function play(song, source = 'feed', list = [], index = -1, time = null, paused 
   // Same iframe every time: never swap players, so the first sound tap stays valid on iOS.
   if (soundOn) { player.unMute(); player.setVolume(100); } else player.mute();
   loaded[current] = song.vid;
-  if (paused) { player.cueVideoById({videoId:song.vid,startSeconds:offset}); $('#paused').style.display = 'block'; }
-  else {
-    player.loadVideoById({videoId:song.vid,startSeconds:offset});
+  // Feed with auto-next: queue this card and the upcoming ones in the same player (never a new iframe).
+  const ids = source === 'feed' && opts.autoNext !== false && player.loadPlaylist ? playlistWindow(cards,index,isDead) : null;
+  playlistIds = ids; playlistPending = !!ids;
+  if (paused) {
+    if (ids) player.cuePlaylist({playlist:ids,index:0,startSeconds:offset}); else player.cueVideoById({videoId:song.vid,startSeconds:offset});
+    $('#paused').style.display = 'block';
+  } else {
+    if (ids) player.loadPlaylist({playlist:ids,index:0,startSeconds:offset}); else player.loadVideoById({videoId:song.vid,startSeconds:offset});
     startTimer = setTimeout(() => { const state = player.getPlayerState(); if (state !== 1 && state !== 3) needTap(); },3500);
   }
   updateSound();
+}
+const isDead = vid => deadIds.has(vid);
+function reportedVid(player) {
+  try { const id = player.getVideoData?.()?.video_id; if (id) return id; } catch {}
+  try { const id = new URL(player.getVideoUrl()).searchParams.get('v'); if (id) return id; } catch {}
+  const i = player.getPlaylistIndex?.(); return i >= 0 ? playlistIds?.[i] : null;
+}
+// The player advanced its own playlist: bring the feed, dock, seen set and glow in step without
+// loading anything (a load would reset the chain). Returns true when the UI moved.
+function syncPlaylist() {
+  if (!playlistIds || playing.source !== 'feed' || !ready[current] || !playing.song) return false;
+  const player = players[current], vid = reportedVid(player);
+  // Ignore reports from the previous queue until the player shows the playlist we just loaded.
+  if (playlistPending) {
+    let list = null; try { list = player.getPlaylist?.(); } catch {}
+    if (vid === playlistIds[0] || (Array.isArray(list) && list.join() === playlistIds.join())) playlistPending = false;
+    else return false;
+  }
+  const pos = playlistMove(playlistIds,vid,playing.song.vid); if (pos < 0) return false;
+  let index = cards.findIndex((c,i)=>i > active && c.song.vid === vid);
+  if (index < 0) index = cards.findIndex(c=>c.song.vid === vid);
+  // The card was removed meanwhile: drop the chain and let the normal recovery path take over.
+  if (index < 0) { playlistIds = null; return false; }
+  clearTimeout(endTimer); clearPlaybackTimers();
+  const song = cards[index].song; active = index;
+  if (!seen.has(song.vid)) { seen.add(song.vid); storage.set('dx_seen',[...seen].slice(-20000)); }
+  playing = {source:'feed',song,list:[],index}; loaded[current] = song.vid;
+  setBackdrop(song); renderDock();
+  // Instant scroll: the observer sees the already-active card and does not reload it.
+  const feed = $('#feed'); if (Math.abs(feed.scrollTop-cards[index].el.offsetTop) > 1) feed.scrollTop = cards[index].el.offsetTop;
+  requestAnimationFrame(syncGeometry); fill();
+  const upcoming = cards.slice(index+1).filter(c=>!c.song.dead && !isDead(c.song.vid)).length;
+  if (shouldRefresh(playlistIds,pos,upcoming,document.hidden)) {
+    const ids = playlistWindow(cards,index,isDead); playlistIds = ids; playlistPending = true;
+    player.loadPlaylist({playlist:ids,index:0,startSeconds:player.getCurrentTime() || 0});
+  }
+  return true;
 }
 function nextSong() {
   if (playing.source === 'feed') return cards.slice(active+1).find(c=>!c.song.dead)?.song;
@@ -336,12 +382,19 @@ function nextSong() {
 }
 function preload() {} // Single-player mode: nothing to preload into a second iframe.
 function advance() {
-  if (playing.source === 'feed') return go(1);
+  if (playing.source === 'feed') {
+    // Activate directly: IntersectionObserver and smooth scrolling do not run while the page is hidden.
+    let index = active+1; while (cards[index] && (cards[index].song.dead || isDead(cards[index].song.vid))) index++;
+    if (!cards[index]) return go(1);
+    activate(index); cards[index].el.scrollIntoView({behavior:document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+    return;
+  }
   const song = nextSong();
   if (song) play(song,playing.source,playing.list,playing.list.indexOf(song));
   else { players[current]?.pauseVideo(); notify('End of this selection.'); }
 }
 function onState(k, event) {
+  if (k === current && event.data !== 0) syncPlaylist();
   if (k !== current || !playing.song || loaded[k] !== playing.song.vid) return;
   // Restoring a paused track cues it (state 5); it stays paused until the user resumes.
   $('#paused').style.display = event.data === 2 || (event.data === 5 && !playRequested) ? 'block' : 'none';
@@ -354,10 +407,17 @@ function onState(k, event) {
     if (!playing.counted) { playing.counted = true; stats.played++; saveStats(); }
     updateSound();
   }
-  if (event.data === 0 && opts.autoNext !== false) advance();
+  if (event.data === 0 && opts.autoNext !== false) {
+    clearTimeout(endTimer);
+    const pos = playlistIds && playing.source === 'feed' ? playlistIds.indexOf(playing.song.vid) : -1;
+    // Mid-playlist the player chains by itself; only step in if it has not moved shortly after.
+    if (pos >= 0 && pos < playlistIds.length-1) endTimer = setTimeout(() => { if (ready[current] && players[current].getPlayerState() === 0 && !syncPlaylist()) advance(); },2500);
+    else advance();
+  }
   renderSession();
 }
 function onError(k, event) {
+  if (k === current) syncPlaylist();
   const vid = loaded[k]; if (!vid) return;
   stats.codes[event.data] = (stats.codes[event.data] || 0)+1;
   if (![100,101,150].includes(event.data)) {
@@ -428,10 +488,21 @@ function togglePlay() {
 }
 function stopPlayers() {
   playRequested = false; clearPlaybackTimers();
-  clearUnlock(); if (ready[current]) players[current].stopVideo(); loaded[current] = null;
+  clearUnlock(); if (ready[current]) players[current].stopVideo(); loaded[current] = null; playlistIds = null; clearTimeout(endTimer);
   $('#sound').hidden = true; $('#hint').hidden = true; $('#paused').style.display = 'none';
 }
 $('#sound').onclick = soundTap;
+// Returning from the background: catch up with a chain that moved, or restart one that ran out.
+function resumeSync() {
+  if (document.hidden || !ready[current] || !playing.song) return;
+  if (syncPlaylist()) return;
+  if (players[current].getPlayerState() === 0 && playRequested && opts.autoNext !== false) { clearTimeout(endTimer); advance(); return; }
+  const card = playing.source === 'feed' && !currentModal && cards[active];
+  if (card && card.song.vid === playing.song.vid && Math.abs($('#feed').scrollTop-card.el.offsetTop) > 1) $('#feed').scrollTop = card.el.offsetTop;
+  renderDock(); requestAnimationFrame(syncGeometry);
+}
+document.addEventListener('visibilitychange',resumeSync);
+window.addEventListener('pageshow',resumeSync);
 function attachPlayers(factory) {
   const k = 0; players[k] = factory(k, {
     onReady:() => { ready[k] = true; if (playing.song) play(playing.song,playing.source,playing.list,playing.index); },
@@ -624,7 +695,7 @@ async function boot() {
     else model = new SessionDiscoveries('local-demo',storage,(...args)=>accountAPI.req(...args),()=>{renderDock();renderSession();});
     await loadWants(); attachPlayers((k,events)=>new fixtureData.FakePlayer(events)); start();
     // Read-only diagnostics and synthetic player events exist only in the localhost fixture.
-    window.crateFixture = {model,api,players,get playing(){return playing;},get active(){return active;}};
+    window.crateFixture = {model,api,players,get playlist(){return playlistIds;},get playing(){return playing;},get active(){return active;}};
     return;
   }
   initYouTube(); api = catalogue; model = guestSession; renderSession();

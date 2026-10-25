@@ -26,10 +26,16 @@ export function createAPI(params) {
   },get(path) {return this.req('GET',path);}};
 }
 export class FakePlayer {
-  constructor(events) {this.events=events;this.state=2;this.time=0;this.muted=true;queueMicrotask(()=>events.onReady());}
-  emitState(data){this.state=data;this.events.onStateChange({data});}
-  loadVideoById({videoId,startSeconds=0}) {this.vid=videoId;this.time=startSeconds;queueMicrotask(()=>this.emitState(1));}
-  cueVideoById({videoId,startSeconds=0}) {this.vid=videoId;this.time=startSeconds;this.state=5;}
+  // Models the IFrame API, including a playlist the player advances on its own when a video ends.
+  constructor(events) {this.events=events;this.state=2;this.time=0;this.muted=true;this.list=null;this.idx=-1;this.loads=0;queueMicrotask(()=>events.onReady());}
+  emitState(data){this.state=data;this.events.onStateChange({data});if(data===0&&this.list&&this.idx<this.list.length-1&&!this.holdPlaylist)queueMicrotask(()=>this.nextVideo());}
+  loadVideoById({videoId,startSeconds=0}) {this.loads++;(this.history||=[]).push("v:"+videoId);this.list=null;this.idx=-1;this.vid=videoId;this.time=startSeconds;queueMicrotask(()=>this.emitState(1));}
+  cueVideoById({videoId,startSeconds=0}) {this.list=null;this.idx=-1;this.vid=videoId;this.time=startSeconds;this.state=5;}
+  loadPlaylist({playlist,index=0,startSeconds=0}) {this.loads++;(this.history||=[]).push("p:"+playlist[index]);this.list=[...playlist];this.idx=index;this.vid=this.list[index];this.time=startSeconds;queueMicrotask(()=>this.emitState(1));}
+  cuePlaylist({playlist,index=0,startSeconds=0}) {this.list=[...playlist];this.idx=index;this.vid=this.list[index];this.time=startSeconds;this.state=5;}
+  nextVideo(){if(!this.list||this.idx>=this.list.length-1)return;this.idx++;this.vid=this.list[this.idx];this.time=0;this.emitState(-1);this.emitState(1);}
+  getPlaylist(){return this.list?[...this.list]:null;}getPlaylistIndex(){return this.list?this.idx:-1;}
+  getVideoData(){return {video_id:this.vid};}getVideoUrl(){return 'https://www.youtube.com/watch?v='+this.vid;}
   playVideo(){this.emitState(1);}
   pauseVideo(){this.emitState(2);}
   stopVideo(){this.state=-1;}
