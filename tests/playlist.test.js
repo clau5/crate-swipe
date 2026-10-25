@@ -25,3 +25,11 @@ test('queue refreshes at a song boundary only when more cards are waiting',()=>{
   assert.equal(shouldRefresh(ids,7,10,true),false,'hidden: keep the running chain');
   assert.equal(shouldRefresh(ids,11,3,true),true,'hidden: refresh only once the chain is on its last song');
 });
+test('a swipe jumps inside the queue only when it is settled and enough songs stay queued',async()=>{
+  const {playlistJump}=await import('../playlist.js');
+  const ids=['a','b','c','d','e'];
+  assert.equal(playlistJump(ids,'b',false),1);assert.equal(playlistJump(ids,'a',false),0,'backwards inside the queue is fine');
+  assert.equal(playlistJump(ids,'d',false),-1,'only one song left behind: rebuild');
+  assert.equal(playlistJump(ids,'b',true),-1,'queue still loading');
+  assert.equal(playlistJump(ids,'zz',false),-1);assert.equal(playlistJump(null,'a',false),-1);
+});

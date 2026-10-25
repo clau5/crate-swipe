@@ -3,7 +3,7 @@ import {SessionDiscoveries, GuestDiscoveries, guestStatus, trackKey} from './ses
 import {VideoAvailability} from './video-availability.js';
 import {CatalogueClient} from './catalogue-client.js';
 import {sharedCatalogueToken} from './config.js';
-import {PLAYLIST_MAX, playlistWindow, playlistMove, shouldRefresh} from './playlist.js';
+import {PLAYLIST_MAX, playlistWindow, playlistMove, shouldRefresh, playlistJump} from './playlist.js';
 
 const $ = selector => document.querySelector(selector);
 const storage = {
@@ -14,7 +14,7 @@ const params = new URLSearchParams(location.search);
 // Test/demo data can only run on a local server, never on the public Pages site.
 const fixture = params.has('fixture') && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const dryRun = params.has('dryrun');
-const defaults = {genre:'Electronic',style:'Techno',label:'',country:'',y1:'1995',y2:'',startAt:'0',hideSeen:true,autoNext:true};
+const defaults = {genre:'Electronic',style:'Techno',label:'',country:'',y1:'1995',y2:'',startAt:'0',hideSeen:true,autoNext:true,playMode:'explore'};
 let opts = {...defaults, ...storage.get('dx_opts', {})};
 let seen = new Set(storage.get('dx_seen', []));
 let stats = storage.get('dx_stats', {played:0, dead:0, codes:{}, deadIds:[]});
@@ -36,6 +36,11 @@ let current = 0, soundOn = false, playRequested = false, startTimer, verifyTimer
 // Feed playback hands YouTube a playlist so the player itself starts the next song, even while iOS
 // suspends this page. playlistIds mirrors what the player holds; pending until it reports the first item.
 let playlistIds = null, playlistPending = false;
+// Explore mode (default): one video per swipe via loadVideoById, the fastest start; auto-next runs
+// from page JS, so it only works while the page is visible. Run mode: the player-held playlist
+// above, so songs keep chaining with the phone locked; swipes inside the queue use playVideoAt.
+const runMode = () => opts.playMode === 'run' && opts.autoNext !== false;
+let awaitVid = null, pendingSeek = null;
 const wrap = () => $('#pA');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const https = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } };
@@ -123,7 +128,7 @@ GENRES.forEach(value => $('#genre').add(new Option(value, value)));
 STYLES.forEach(value => { const o = document.createElement('option'); o.value = value; $('#styles').append(o); });
 async function openPick() {
   for (const k of ['genre','style','label','country','y1','y2','startAt']) $('#' + k).value = opts[k] ?? '';
-  $('#hideSeen').checked = opts.hideSeen !== false; $('#autoNext').checked = opts.autoNext !== false;
+  $('#hideSeen').checked = opts.hideSeen !== false; $('#autoNext').checked = opts.autoNext !== false; $('#playMode').value = opts.playMode === 'run' ? 'run' : 'explore';
   $('#seenCount').textContent = `${seen.size.toLocaleString()} songs seen on this device.`;
   const s = explorer?.state.stats || {};
   $('#stats').textContent = `Songs played: ${stats.played}\nUnavailable videos skipped: ${stats.dead}\nYouTube errors: ${JSON.stringify(stats.codes)}\nThis dig: ${explorer?.fetched || 0} releases, ${s.songs || 0} songs\nHigh / probable / unmatched: ${s.conf_high || 0} / ${s.conf_low || 0} / ${s.conf_none || 0}\nAPI requests: ${api?.count || 0}\nCached records: ${await cache.count()} (cap 4000)`;
@@ -149,7 +154,13 @@ $('#goBtn').onclick = () => {
   const values = Object.fromEntries(['genre','style','label','country','y1','y2','startAt'].map(k => [k, $('#' + k).value.trim()]));
   for (const k of ['y1','y2']) if (values[k] && (!/^\d{4}$/.test(values[k]) || +values[k] < 1900 || +values[k] > new Date().getFullYear() + 1)) return notify('Enter a valid four-digit year.');
   if (values.y1 && values.y2 && Math.abs(+values.y2 - +values.y1) > 60) return notify('Choose a year range of 60 years or less.');
-  opts = {...values,hideSeen:$('#hideSeen').checked,autoNext:$('#autoNext').checked}; storage.set('dx_opts', opts); hide(); start();
+  opts = {...values,hideSeen:$('#hideSeen').checked,autoNext:$('#autoNext').checked,playMode:$('#playMode').value === 'run' ? 'run' : 'explore'}; storage.set('dx_opts', opts); hide(); start();
+};
+// Switching Explore/Run applies right away and keeps the dig and the current song where they are.
+$('#playMode').onchange = () => {
+  opts = {...opts,playMode:$('#playMode').value === 'run' ? 'run' : 'explore'}; storage.set('dx_opts', opts);
+  fill();
+  if (playing.source === 'feed' && playing.song && ready[current]) { const snap = snapshot(); play(snap.song,'feed',[],active,snap.time,snap.paused); }
 };
 function connect(token, username) {
   const client = new Discogs(token, {dryRun, onAuthError:() => {
@@ -259,7 +270,7 @@ async function start() {
   explorer = next; next.run().catch(() => notify('Discovery stopped. Change your filters to try again.'));
 }
 function fill() {
-  while (pool.length && cards.length-active <= PLAYLIST_MAX) {
+  while (pool.length && cards.length-active <= (runMode() ? PLAYLIST_MAX : 3)) {
     const index = chooseNext(pool,cards.slice(-gap).map(c=>c.song),{gap,ahead:cards.length-active-1});
     if (index < 0) break;
     addCard(pool.splice(index,1)[0]);
@@ -326,9 +337,18 @@ function play(song, source = 'feed', list = [], index = -1, time = null, paused 
   const offset = time ?? ((song.duration && Number(opts.startAt) > song.duration-30) ? 0 : Number(opts.startAt) || 0);
   // Same iframe every time: never swap players, so the first sound tap stays valid on iOS.
   if (soundOn) { player.unMute(); player.setVolume(100); } else player.mute();
-  loaded[current] = song.vid;
-  // Feed with auto-next: queue this card and the upcoming ones in the same player (never a new iframe).
-  const ids = source === 'feed' && opts.autoNext !== false && player.loadPlaylist ? playlistWindow(cards,index,isDead) : null;
+  loaded[current] = song.vid; awaitVid = null; pendingSeek = null;
+  const queue = source === 'feed' && runMode() && !!player.loadPlaylist;
+  // Run mode swipe to a card the player already holds: jump inside the queue, no rebuild.
+  const at = queue && !paused && time === null && player.playVideoAt ? playlistJump(playlistIds,song.vid,playlistPending) : -1;
+  if (at >= 0) {
+    awaitVid = song.vid; if (offset > 0) pendingSeek = {vid:song.vid,offset};
+    player.playVideoAt(at);
+    startTimer = setTimeout(() => { if (player.getPlayerState() === 2) needTap(); },3500);
+    updateSound(); return;
+  }
+  // Run mode: queue this card and the upcoming ones in the same player (never a new iframe).
+  const ids = queue ? playlistWindow(cards,index,isDead) : null;
   playlistIds = ids; playlistPending = !!ids;
   if (paused) {
     if (ids) player.cuePlaylist({playlist:ids,index:0,startSeconds:offset}); else player.cueVideoById({videoId:song.vid,startSeconds:offset});
@@ -359,6 +379,8 @@ function syncPlaylist() {
     if (vid === playlistIds[0] || (Array.isArray(list) && list.join() === playlistIds.join())) playlistPending = false;
     else return false;
   }
+  // After a playVideoAt jump, ignore the previous song's reports until the target shows up.
+  if (awaitVid) { if (vid !== awaitVid) return false; awaitVid = null; }
   const pos = playlistMove(playlistIds,vid,playing.song.vid); if (pos < 0) return false;
   let index = cards.findIndex((c,i)=>i > active && c.song.vid === vid);
   if (index < 0) index = cards.findIndex(c=>c.song.vid === vid);
@@ -405,6 +427,7 @@ function onState(k, event) {
   if (event.data === 2 && playRequested && soundOn && !unlocked[k]) needTap();
   if (event.data === 1) {
     clearTimeout(startTimer);
+    if (pendingSeek && reportedVid(players[k]) === pendingSeek.vid) { const s = pendingSeek; pendingSeek = null; if ((players[k].getCurrentTime() || 0) < s.offset-2) players[k].seekTo(s.offset,true); }
     if (soundOn && players[k].isMuted()) players[k].unMute();
     if (!players[k].isMuted()) { soundOn = true; unlocked[k] = true; clearUnlock(); }
     if (!playing.counted) { playing.counted = true; stats.played++; saveStats(); }
@@ -493,7 +516,7 @@ function togglePlay() {
 }
 function stopPlayers() {
   playRequested = false; clearPlaybackTimers();
-  clearUnlock(); if (ready[current]) players[current].stopVideo(); loaded[current] = null; playlistIds = null; clearTimeout(endTimer);
+  clearUnlock(); if (ready[current]) players[current].stopVideo(); loaded[current] = null; playlistIds = null; awaitVid = null; pendingSeek = null; clearTimeout(endTimer);
   $('#sound').hidden = true; $('#hint').hidden = true; $('#paused').style.display = 'none';
 }
 $('#sound').onclick = soundTap;

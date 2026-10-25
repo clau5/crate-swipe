@@ -33,6 +33,7 @@ export class FakePlayer {
   cueVideoById({videoId,startSeconds=0}) {this.list=null;this.idx=-1;this.vid=videoId;this.time=startSeconds;this.state=5;}
   loadPlaylist({playlist,index=0,startSeconds=0}) {this.loads++;(this.history||=[]).push("p:"+playlist[index]);this.list=[...playlist];this.idx=index;this.vid=this.list[index];this.time=startSeconds;queueMicrotask(()=>this.emitState(1));}
   cuePlaylist({playlist,index=0,startSeconds=0}) {this.list=[...playlist];this.idx=index;this.vid=this.list[index];this.time=startSeconds;this.state=5;}
+  playVideoAt(i){if(!this.list||i<0||i>=this.list.length)return;(this.history||=[]).push('at:'+this.list[i]);this.jumps=(this.jumps||0)+1;this.idx=i;this.vid=this.list[i];this.time=0;queueMicrotask(()=>{this.emitState(-1);this.emitState(1);});}
   nextVideo(){if(!this.list||this.idx>=this.list.length-1)return;this.idx++;this.vid=this.list[this.idx];this.time=0;this.emitState(-1);this.emitState(1);}
   getPlaylist(){return this.list?[...this.list]:null;}getPlaylistIndex(){return this.list?this.idx:-1;}
   getVideoData(){return {video_id:this.vid};}getVideoUrl(){return 'https://www.youtube.com/watch?v='+this.vid;}
