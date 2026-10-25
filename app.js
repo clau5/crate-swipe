@@ -315,9 +315,16 @@ function replay(song, source, list, index) {
   play(song,source,list,index);
   if (!soundOn) soundTap();
 }
+// GoatCounter product events (no-op if the script is blocked or not loaded yet; never throws).
+let lastCountedVid = null;
+function countEvent(path, title) {
+  try { if (!fixture && window.goatcounter?.count) window.goatcounter.count({path, title, event:true}); } catch {}
+}
+function countSeen(song) { if (!song?.vid || song.vid === lastCountedVid) return; lastCountedVid = song.vid; countEvent('track-seen','Track seen'); }
 function play(song, source = 'feed', list = [], index = -1, time = null, paused = false) {
   if (!song) return;
   playing = {source,song,list,index}; setBackdrop(song); renderDock();
+  if (!paused) countSeen(song);
   requestAnimationFrame(syncGeometry);
   clearPlaybackTimers(); playRequested = !paused; $('#paused').style.display = 'none';
   clearUnlock();
@@ -367,7 +374,7 @@ function syncPlaylist() {
   clearTimeout(endTimer); clearPlaybackTimers();
   const song = cards[index].song; active = index;
   if (!seen.has(song.vid)) { seen.add(song.vid); storage.set('dx_seen',[...seen].slice(-20000)); }
-  playing = {source:'feed',song,list:[],index}; loaded[current] = song.vid;
+  playing = {source:'feed',song,list:[],index}; loaded[current] = song.vid; countSeen(song);
   setBackdrop(song); renderDock();
   // Instant scroll: the observer sees the already-active card and does not reload it.
   const feed = $('#feed'); if (Math.abs(feed.scrollTop-cards[index].el.offsetTop) > 1) feed.scrollTop = cards[index].el.offsetTop;
@@ -547,6 +554,7 @@ $('#heart').onclick = () => like(playing.song);
 async function like(song) {
   if (!song || !model) return;
   const target = actionModel(song), result = await target.toggle(song);
+  if (result?.adding) countEvent(target.isGuest ? 'track-saved-session' : 'track-liked', target.isGuest ? 'Track saved to session' : 'Record added to wantlist');
   if (result) notify(target.isGuest ? result.adding ? 'Saved to this session' : 'Removed from this session' : dryRun && !fixture ? 'Dry run: no Discogs change sent.' : result.adding ? 'Added to wantlist · saved in this session' : 'Removed record from wantlist');
   if (target.error) notify(target.error,10000);
   if (playing.source === 'session') {

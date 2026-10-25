@@ -16,7 +16,8 @@ const page = await context.newPage();
 page.setDefaultTimeout(15000);
 page.setDefaultNavigationTimeout(15000);
 page.on('pageerror',e=>errors.push(e.message));
-page.on('request',request=>{if(!request.url().startsWith(base)) requests.push(request.url());});
+// GoatCounter's script (gc.zgo.at) is the one intended third-party load; it never counts localhost. Anything else is a leak.
+page.on('request',request=>{const url=request.url();if(!url.startsWith(base) && new URL(url).hostname!=='gc.zgo.at') requests.push(url);});
 await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
 async function check(name,fn){await fn();results.push(name);console.log('PASS '+name);}
 async function open(query='fixture=1') {await page.goto(base+'/?'+query);await page.waitForFunction(()=>!!window.crateFixture?.playing.song);await page.evaluate(()=>document.fonts.ready);}

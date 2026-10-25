@@ -79,6 +79,14 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - Browser geometry check updated: cover y 271, dock y 701 on 402 × 874, plus computed radius, font sizes, blur, glow size and glow-above-centre assertions.
 
 
+## 3.1.5 — GoatCounter analytics
+
+- `index.html` loads GoatCounter (`https://crate-swipe.goatcounter.com/count`, async `//gc.zgo.at/count.js`) just before `</body>`, after `app.js`. Pageviews are automatic; dashboard at https://crate-swipe.goatcounter.com.
+- `app.js` sends custom events via `window.goatcounter.count({event:true})`, guarded so a blocked/unloaded script is a no-op and never throws; skipped in local fixture mode:
+  - `track-seen` — a track starts playing (feed card, playlist auto-next, session/release replay); consecutive repeats of the same video are not re-counted.
+  - `track-liked` — a record is added to the Discogs wantlist; `track-saved-session` — a guest saves a track to the session. Removals are not counted.
+- Production only; the dev site has no counter so testing doesn't skew the dashboard.
+
 ## 3.1.4 — production release
 
 Promoted the 3.1.2-dev → 3.1.4-dev preview builds from `clau5/crate-swipe-dev` to production (`clau5/crate-swipe`, https://clau5.github.io/crate-swipe/). Ships: background-safe feed auto-next via the YouTube player playlist (3.1.2), the cover sound hint only when the player is paused (3.1.3), and the pause glyph hidden while sheets are open (3.1.4). The "Dev-only" notes below describe those preview builds.
