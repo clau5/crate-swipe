@@ -28,3 +28,12 @@ export function shouldRefresh(ids, pos, upcoming, hidden, max = PLAYLIST_MAX) {
   if (pos < 0 || upcoming <= remaining) return false;
   return hidden ? remaining === 0 : remaining < Math.ceil(max / 2);
 }
+
+// Swipe target already queued in the running playlist: jump there with playVideoAt instead of
+// rebuilding the queue (a fresh loadPlaylist has to resolve every queued video before it starts).
+// Needs at least `ahead` songs left behind the target so locked-phone chaining keeps working.
+export function playlistJump(ids, vid, pending, ahead = 2) {
+  if (!ids?.length || pending || !vid) return -1;
+  const at = ids.indexOf(vid);
+  return at >= 0 && ids.length - 1 - at >= ahead ? at : -1;
+}

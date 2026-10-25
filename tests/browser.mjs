@@ -91,6 +91,7 @@ try {
         const allowed=()=>q.muted||q.gestureOK||!!navigator.userActivation?.isActive;
         q.playVideo=function(){if(!allowed()){window.crateIOS.refused++;return this.emitState(2);}if(!this.muted)this.gestureOK=true;this.emitState(1);};
         q.loadVideoById=function({videoId,startSeconds=0}){const ok=allowed();if(ok&&!this.muted)this.gestureOK=true;if(!ok)window.crateIOS.refused++;this.vid=videoId;this.time=startSeconds;queueMicrotask(()=>this.emitState(ok?1:2));};
+        q.playVideoAt=function(i){const ok=allowed();if(!ok)window.crateIOS.refused++;this.idx=i;this.vid=this.list[i];this.time=0;queueMicrotask(()=>this.emitState(ok?1:2));};
         q.loadPlaylist=function({playlist,index=0,startSeconds=0}){const ok=allowed();if(ok&&!this.muted)this.gestureOK=true;if(!ok)window.crateIOS.refused++;this.loads++;this.list=[...playlist];this.idx=index;this.vid=this.list[index];this.time=startSeconds;queueMicrotask(()=>this.emitState(ok?1:2));};
       }
     });
@@ -112,7 +113,27 @@ try {
     assert.equal(await page.evaluate(()=>window.crateIOS.refused),0,'iOS never refused sound after the first tap');
     await open();
   });
+  await check('explore mode (default): each swipe loads one video and auto-next still runs from the page',async()=>{
+    await page.locator('#sound').click();
+    await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].getPlaylist()),null,'no queue in explore mode');
+    assert.ok(await page.locator('.card').count()<=4,'explore keeps the light 4-card buffer');
+    await page.locator('#feed').evaluate(el=>el.scrollTop=874);await page.waitForFunction(()=>window.crateFixture.active===1);
+    await page.waitForFunction(()=>window.crateFixture.players[0].vid==='bbbbbbbbbbb');
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].history.at(-1)),'v:bbbbbbbbbbb');
+    await page.evaluate(()=>window.crateFixture.players[0].emitState(0));
+    await page.waitForFunction(()=>window.crateFixture.active===2);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].vid),'ccccccccccc');
+    // Switching to Run in the filters sheet keeps the song and the dig, and hands the player a queue.
+    await page.locator('#chip').click();await page.locator('#playMode').selectOption('run');
+    await page.waitForFunction(()=>window.crateFixture.players[0].getPlaylist()?.[0]==='ccccccccccc');
+    assert.equal(await page.evaluate(()=>window.crateFixture.active),2);
+    assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('dx_opts')).playMode),'run');
+    await page.locator('#closePick').click();
+    await page.evaluate(()=>localStorage.removeItem('dx_opts'));await open();
+  });
   await check('feed auto-next is chained by the player playlist, not by a reload (background-safe)',async()=>{
+    await page.evaluate(()=>localStorage.setItem('dx_opts',JSON.stringify({playMode:'run'})));await open();
     await page.locator('#sound').click();
     await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
     const ids=await page.evaluate(()=>window.crateFixture.players[0].getPlaylist());
@@ -132,12 +153,24 @@ try {
     await page.waitForTimeout(200);
     assert.equal(await page.evaluate(()=>window.crateFixture.players[0].loads),loads,'player advanced itself; the app never reloaded it: '+await page.evaluate(()=>JSON.stringify(window.crateFixture.players[0].history)));
     assert.equal(await page.evaluate(()=>window.crateFixture.active),2,'no double advance');
-    // A swipe rebuilds the queue from the chosen card.
+    // A swipe to a card already in the queue jumps there (playVideoAt) instead of rebuilding it.
     await page.locator('#feed').evaluate(el=>el.scrollTop=0);await page.waitForFunction(()=>window.crateFixture.active===0);
+    await page.waitForFunction(()=>window.crateFixture.players[0].vid==='aaaaaaaaaaa');
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(()=>window.crateFixture.active),0,'a stale report from the old song must not pull the feed back');
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].loads),loads,'in-queue swipe: no reload');
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].history.at(-1)),'at:aaaaaaaaaaa');
     assert.deepEqual(await page.evaluate(()=>window.crateFixture.players[0].getPlaylist()),ids);
-    await open();
+    // The chain keeps running from the jumped-to card.
+    await page.evaluate(()=>window.crateFixture.players[0].emitState(0));await page.waitForFunction(()=>window.crateFixture.active===1);
+    assert.equal(await page.evaluate(()=>window.crateFixture.players[0].loads),loads);
+    // A swipe with too little queue left behind the target rebuilds it from that card.
+    await page.locator('#feed').evaluate(el=>el.scrollTop=874*3);await page.waitForFunction(()=>window.crateFixture.active===3);
+    await page.waitForFunction(()=>window.crateFixture.players[0].getPlaylist()?.[0]==='ddddddddddd');
+    await page.evaluate(()=>localStorage.removeItem('dx_opts'));await open();
   });
   await check('returning from the background syncs a moved chain or restarts an ended one',async()=>{
+    await page.evaluate(()=>localStorage.setItem('dx_opts',JSON.stringify({playMode:'run'})));await open();
     await page.locator('#sound').click();await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
     // JS was suspended: the player moved two songs on without any event reaching the page.
     await page.evaluate(()=>{const p=window.crateFixture.players[0];p.idx=2;p.vid=p.list[2];p.state=1;document.dispatchEvent(new Event('visibilitychange'));});
@@ -148,7 +181,7 @@ try {
     await page.waitForFunction(()=>window.crateFixture.active===3);
     await page.waitForFunction(()=>window.crateFixture.players[0].getPlayerState()===1);
     assert.equal(await page.evaluate(()=>window.crateFixture.players[0].vid),'ddddddddddd');
-    await open();
+    await page.evaluate(()=>localStorage.removeItem('dx_opts'));await open();
   });
   await check('turning auto-next off keeps single-video playback with no queue',async()=>{
     await page.evaluate(()=>{localStorage.setItem('dx_opts',JSON.stringify({autoNext:false}));});await open();

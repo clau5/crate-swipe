@@ -79,6 +79,10 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - Browser geometry check updated: cover y 271, dock y 701 on 402 × 874, plus computed radius, font sizes, blur, glow size and glow-above-centre assertions.
 
 
+## 3.1.6 — production release (Explore / Run listening modes)
+
+Promoted 3.1.6-dev (`clau5/crate-swipe-dev` @ `9c5020a`) to production on top of 3.1.5. Ships the Explore / Run listening mode (Filters → Listening mode; Explore is the default with instant swipes, Run keeps the YouTube playlist queue for locked-phone auto-next and jumps inside it with `playVideoAt`). GoatCounter from 3.1.5 is kept unchanged: the script tag in `index.html` and the `track-seen` / `track-liked` / `track-saved-session` events in `app.js`, in both modes.
+
 ## 3.1.5 — GoatCounter analytics
 
 - `index.html` loads GoatCounter (`https://crate-swipe.goatcounter.com/count`, async `//gc.zgo.at/count.js`) just before `</body>`, after `app.js`. Pageviews are automatic; dashboard at https://crate-swipe.goatcounter.com.
@@ -115,3 +119,14 @@ Dev-only build, published from `clau5/crate-swipe-dev` (https://clau5.github.io/
 - **Fallbacks.** If a mid-queue ENDED is not followed by the player moving within 2.5 s, or at the end of the queue, the old path runs. `advance()` now activates the next card directly rather than relying on the observer. `visibilitychange` / `pageshow` catch the UI up to a chain that moved while hidden, or restart playback if the player ended while JS was asleep.
 - **Unchanged.** Session and release-list playback still use `loadVideoById` + ENDED → `advance()`. With auto-next off, no queue is loaded. `startAt` applies only to the first song of each queue; songs the player chains start from 0.
 - **Caveat.** Locked-phone chaining is best effort. It depends on iOS letting the already-playing YouTube iframe start its next playlist item in the background. That can't be verified on desktop WebKit, so a real iPhone check is still needed. A video that fails inside the queue while the page is asleep may stop the chain until the page is reopened.
+
+## 3.1.6-dev — Explore / Run listening modes (instant swipes vs locked-phone auto-next)
+
+Dev preview, promoted to production as 3.1.6 (with GoatCounter from 3.1.5 retained in prod).
+
+- **Why swipes got slower in 3.1.2-dev.** There never was a second preloading iframe after 3.0.1 (one player keeps the iOS sound unlock). 3.1.1 felt instant because each swipe was a single `loadVideoById`. 3.1.2-dev made every swipe call `loadPlaylist` with up to 12 IDs, so the player had to resolve the whole queue before the first note, and it threw that queue away and rebuilt it on the next swipe. The feed also built 13 cards ahead instead of 4, so more covers and availability checks competed with the first video on each dig.
+- **Can both coexist?** Partly. A second hidden "preload" player is not an option: on iOS only the iframe that got the first tap may play with sound, and the background chain only works if that same iframe holds the playlist. Switching to the playlist only when the page hides is unreliable too, because iOS may refuse a new load once the page is hidden. So the build does two things:
+  - **Explore (default).** Exactly the 3.1.1 path: `loadVideoById` per swipe, a 4-card buffer, and auto-next from page JS (ENDED → `advance()`). Auto-next works while the screen is on. With the phone locked, the current song finishes and playback stops.
+  - **Run.** The 3.1.2-dev player playlist (chains with the phone locked), plus a swipe to a card already in the queue now calls `playVideoAt(i)` instead of rebuilding the queue (`playlistJump` in `playlist.js`). The queue is only rebuilt when the target isn't queued, the queue is still loading, or fewer than 2 songs would stay queued behind the target. After a jump, the old song's state reports are ignored until the player reports the target (`awaitVid`), so a stale event can't pull the feed back. "Skip intro" is applied with a seek on the first PLAYING after a jump.
+- **UI.** Filters sheet → "Listening mode" (Explore · instant swipes / Run · keeps playing with the phone locked). The setting is stored in `dx_opts.playMode` and applies right away: the dig and current song stay, and only the way it plays switches. "Go to the next song when one ends" still turns auto-next off in both modes.
+- **Tests.** Fixture player gains `playVideoAt`. Browser checks cover Explore single-video swipes plus JS auto-next, Run playlist chaining, in-queue swipe jumps (no reload, no stale pull-back), queue rebuild near the end, the mode switch keeping the dig, and background resync. The unit test covers `playlistJump`. Real iPhone timing still has to be checked by hand, because headless browsers don't play real YouTube.
