@@ -1,6 +1,6 @@
 {
   "name": "crate-swipe",
-  "version": "3.1.4-dev",
+  "version": "3.1.4",
   "private": true,
   "type": "module",
   "scripts": {

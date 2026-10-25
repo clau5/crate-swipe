@@ -1,5 +1,3 @@
-> **Dev preview.** Production is unchanged at https://clau5.github.io/crate-swipe/.
-
 # Crate Swipe
 
 A little digging. A great discovery.

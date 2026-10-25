@@ -79,6 +79,10 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - Browser geometry check updated: cover y 271, dock y 701 on 402 × 874, plus computed radius, font sizes, blur, glow size and glow-above-centre assertions.
 
 
+## 3.1.4 — production release
+
+Promoted the 3.1.2-dev → 3.1.4-dev preview builds from `clau5/crate-swipe-dev` to production (`clau5/crate-swipe`, https://clau5.github.io/crate-swipe/). Ships: background-safe feed auto-next via the YouTube player playlist (3.1.2), the cover sound hint only when the player is paused (3.1.3), and the pause glyph hidden while sheets are open (3.1.4). The "Dev-only" notes below describe those preview builds.
+
 ## 3.1.4-dev — hide pause glyph on sheets
 
 - The big centered pause mark (`#paused`) is for the feed cover only.
