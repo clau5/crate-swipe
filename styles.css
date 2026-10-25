@@ -821,8 +821,9 @@ body.overlay #dock .progress {
 body.overlay #dock .youtube {
   margin-top:12px
 }
+/* Pause glyph is for the cover stage only; sheets already show pause via the dock. */
 body.overlay #paused {
-  z-index:50
+  display:none!important
 }
 body.overlay #sound {
   top:auto;

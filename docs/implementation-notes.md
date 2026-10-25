@@ -79,6 +79,12 @@ See `test-evidence/summary.json`, `test-evidence/chromium.json` and `test-eviden
 - Browser geometry check updated: cover y 271, dock y 701 on 402 × 874, plus computed radius, font sizes, blur, glow size and glow-above-centre assertions.
 
 
+## 3.1.4-dev — hide pause glyph on sheets
+
+- The big centered pause mark (`#paused`) is for the feed cover only.
+- While a sheet is open (`body.overlay`), it is hidden so it no longer sits on top of This session / release lists. The dock still shows playback state.
+- Dev-only. Production stays on 3.1.1.
+
 ## 3.1.3-dev — quieter cover sound hint
 
 - The “Tap the cover once…” unlock hint only arms when the YouTube player is **paused** after play was requested (Safari refused sound).
